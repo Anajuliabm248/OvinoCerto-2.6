@@ -1,0 +1,22 @@
+{% extends 'global/base.html' %}
+
+{% block content %}
+  <section class="panel">
+    {% if user.is_authenticated %}
+      <h1>{{ title }}</h1>
+      <p>Bem-vindo, {{ user.first_name|default:user.username }}.</p>
+      <div class="actions">
+        <a class="button" href="{% url 'accounts:perfil' %}">Editar perfil</a>
+        {% if usuario_pode_gerenciar_usuarios %}
+          <a class="button button-secondary" href="{% url 'accounts:usuarios' %}">Gerenciar usuarios</a>
+        {% endif %}
+      </div>
+    {% else %}
+      <p>Acesse sua conta ou crie um cadastro para usar o OvinoCerto.</p>
+      <div class="actions">
+        <a class="button" href="{% url 'accounts:login' %}">Entrar</a>
+        <a class="button button-secondary" href="{% url 'accounts:cadastro' %}">Cadastrar</a>
+      </div>
+    {% endif %}
+  </section>
+{% endblock %}

@@ -1,0 +1,15 @@
+{% extends 'global/base.html' %}
+
+{% block content %}
+    <section class="panel form-panel">
+        <h1>Cadastro</h1>
+        <form method="post" novalidate>
+            {% csrf_token %}
+            {% include 'global/partials/_form_fields.html' %}
+            <div class="actions">
+                <button class="button" type="submit">Cadastrar</button>
+                <a class="button button-secondary" href="{% url 'accounts:login' %}">Entrar</a>
+            </div>
+        </form>
+    </section>
+{% endblock %}
