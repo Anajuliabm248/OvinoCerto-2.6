@@ -45,7 +45,7 @@ def admin_required(view_func):
 
     return wrapper
 
-
+#evita ataques de tipo “open redirect”, garantindo que a URL de redirecionamento seja segura e pertença ao mesmo domínio do site.
 def redirect_seguro(request, fallback='accounts:index'):
     proxima_url = request.POST.get('next') or request.GET.get('next')
     if proxima_url and url_has_allowed_host_and_scheme(

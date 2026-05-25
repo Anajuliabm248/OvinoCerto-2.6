@@ -1,0 +1,16 @@
+
+
+### Code ###
+# Visual Studio Code - https://code.visualstudio.com/
+.settings/
+.vscode/
+.vs/
+
+/.history
+/.pytest_cache
+/venv
+
+db.sqlite3
+static/
+media/
+diagramas/

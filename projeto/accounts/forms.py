@@ -9,7 +9,7 @@ from .models import Perfil, Usuario
 
 User = get_user_model()
 
-
+# Mixin para aplicar classes CSS e evitar repetição de código nos formulários de usuário
 class FormControlMixin:
     def aplicar_classes(self):
         for field in self.fields.values():
@@ -19,15 +19,15 @@ class FormControlMixin:
             else:
                 widget.attrs.setdefault('class', 'form-control')
 
-
+# Formulário base para cadastro e edição de usuários, com validações comuns
 class DadosUsuarioMixin(FormControlMixin, forms.Form):
-    nome = forms.CharField(label='Nome', max_length=100)
-    email = forms.EmailField(label='E-mail')
-    cpf = forms.CharField(label='CPF', max_length=14)
-    telefone = forms.CharField(label='Telefone', max_length=15)
-    estado = forms.CharField(label='Estado', max_length=50)
-    cidade = forms.CharField(label='Cidade', max_length=50)
-    profissao = forms.CharField(label='Profissao', max_length=100)
+    nome = forms.CharField(label='Nome', max_length=100, required=True)
+    email = forms.EmailField(label='E-mail', required=True)  # Será usado como username também
+    cpf = forms.CharField(label='CPF ou CNPJ', max_length=14, required=True)
+    telefone = forms.CharField(label='Telefone', max_length=15, required=True)
+    estado = forms.CharField(label='Estado', max_length=50, required=True)
+    cidade = forms.CharField(label='Cidade', max_length=50, required=True)
+    profissao = forms.CharField(label='Profissao', max_length=100, required=True)
     produtor_ovinos = forms.BooleanField(
         label='Produtor de ovinos',
         required=False,
@@ -39,7 +39,7 @@ class DadosUsuarioMixin(FormControlMixin, forms.Form):
         self.perfil_instance = perfil_instance
         self.aplicar_classes()
 
-        if user_instance and not self.is_bound:
+        if user_instance and not self.is_bound: #is_bound indica se o formulário foi submetido com dados (True) ou se está sendo exibido pela primeira vez (False)
             self.fields['nome'].initial = (
                 getattr(perfil_instance, 'nome', '')
                 or user_instance.get_full_name()
@@ -76,7 +76,7 @@ class DadosUsuarioMixin(FormControlMixin, forms.Form):
         if self.perfil_instance:
             perfis = perfis.exclude(pk=self.perfil_instance.pk)
         if perfis.exists():
-            raise ValidationError('Ja existe um usuario com este CPF.')
+            raise ValidationError('Ja existe um usuario com este CPF ou CNPJ.')
         return cpf
 
     def salvar_user(self, user=None, password=None):
