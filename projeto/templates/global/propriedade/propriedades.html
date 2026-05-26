@@ -5,7 +5,11 @@
     <div class="panel-header">
       <div>
         <h1>Propriedades</h1>
-        <p>{{ page_obj|length }} cadastro{{ page_obj|length|pluralize }} encontrado{{ page_obj|length|pluralize }}.</p>
+        {% if page_obj|length < 2 %}
+          <p>{{ page_obj|length }} propriedade encontrada.</p>
+        {% else %}
+          <p>{{ page_obj|length }} propriedades encontradas.</p>
+        {% endif %}
       </div>
       <a class="button" href="{% url 'propriedade:cadastrar' %}">Nova propriedade</a>
     </div>

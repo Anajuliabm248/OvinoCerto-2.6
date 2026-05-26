@@ -25,7 +25,7 @@ class AccountsAuthTests(TestCase):
         dados.update(extra)
         return dados
 
-    def criar_usuario(self, email='ana@example.com', perfil=Perfil.USER):
+    def criar_usuario(self, email='ana@example.com', perfil=Perfil.USER, cpf='123.456.789-00'):
         user = User.objects.create_user(
             username=email,
             email=email,
@@ -35,7 +35,7 @@ class AccountsAuthTests(TestCase):
             user=user,
             nome='Ana Julia',
             email=email,
-            cpf='123.456.789-00',
+            cpf=cpf,
             telefone='(11) 99999-9999',
             estado='SP',
             cidade='Sao Paulo',
@@ -89,3 +89,50 @@ class AccountsAuthTests(TestCase):
         response = self.client.get(reverse('accounts:usuarios'))
 
         self.assertEqual(response.status_code, 200)
+
+    def test_admin_nao_ve_campos_de_senha_ao_editar_outro_usuario(self):
+        admin = self.criar_usuario(
+            email='admin@example.com',
+            perfil=Perfil.ADMIN,
+            cpf='111.222.333-44',
+        )
+        usuario = self.criar_usuario()
+        self.client.force_login(admin)
+
+        response = self.client.get(reverse('accounts:usuario_editar', kwargs={
+            'user_id': usuario.id,
+        }))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'name="senha1"')
+        self.assertNotContains(response, 'name="senha2"')
+
+    def test_admin_nao_altera_senha_de_outro_usuario_mesmo_com_post(self):
+        admin = self.criar_usuario(
+            email='admin@example.com',
+            perfil=Perfil.ADMIN,
+            cpf='111.222.333-44',
+        )
+        usuario = self.criar_usuario()
+        self.client.force_login(admin)
+
+        response = self.client.post(reverse('accounts:usuario_editar', kwargs={
+            'user_id': usuario.id,
+        }), {
+            'nome': 'Ana Julia',
+            'email': 'ana@example.com',
+            'cpf': '123.456.789-00',
+            'telefone': '(11) 99999-9999',
+            'estado': 'SP',
+            'cidade': 'Sao Paulo',
+            'profissao': 'Produtora',
+            'perfil': Perfil.USER,
+            'is_active': 'on',
+            'senha1': 'NovaSenhaForte123',
+            'senha2': 'NovaSenhaForte123',
+        })
+
+        self.assertRedirects(response, reverse('accounts:usuarios'))
+        usuario.refresh_from_db()
+        self.assertTrue(usuario.check_password('SenhaForte123'))
+        self.assertFalse(usuario.check_password('NovaSenhaForte123'))

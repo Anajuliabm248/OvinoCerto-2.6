@@ -6,18 +6,31 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods
 
+from accounts.models import Usuario
 from propriedade.models import Propriedade
 
 from .forms import LoteForm
 from .models import Lote
 
 
+def _perfil_do_usuario(user):
+    try:
+        return user.perfil_usuario
+    except Usuario.DoesNotExist:
+        return None
+
+
 def _get_propriedade_do_usuario(user, propriedade_id):
     """Retorna a propriedade se pertencer ao usuário (ou se superuser)."""
-    qs = Propriedade.objects.select_related('usuario')
+    qs = Propriedade.objects.select_related('usuario', 'usuario__user')
     if user.is_superuser:
         return get_object_or_404(qs, id=propriedade_id)
-    return get_object_or_404(qs, id=propriedade_id, usuario=user)
+
+    perfil_usuario = _perfil_do_usuario(user)
+    if perfil_usuario is None:
+        return get_object_or_404(qs.none(), id=propriedade_id)
+
+    return get_object_or_404(qs, id=propriedade_id, usuario=perfil_usuario)
 
 
 @login_required
@@ -59,7 +72,7 @@ def cadastrar(request, propriedade_id):
         messages.success(request, 'Lote cadastrado com sucesso.')
         return redirect('lote:listar', propriedade_id=propriedade.id)
 
-    return render(request, 'global/lote/cadastro_lote.html', {
+    return render(request, 'global/lote/cadastro.html', {
         'title': 'Cadastrar Lote',
         'propriedade': propriedade,
         'form': form,

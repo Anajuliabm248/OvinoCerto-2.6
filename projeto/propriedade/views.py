@@ -6,17 +6,30 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods
 
+from accounts.models import Usuario
+
 from .forms import PropriedadeForm
 from .models import Propriedade
 
 
+def perfil_do_usuario(user):
+    try:
+        return user.perfil_usuario
+    except Usuario.DoesNotExist:
+        return None
+
+
 def propriedades_do_usuario(user):
-    propriedades = Propriedade.objects.select_related('usuario')
+    propriedades = Propriedade.objects.select_related('usuario', 'usuario__user')
 
     if user.is_superuser:
         return propriedades.order_by('nome')
 
-    return propriedades.filter(usuario=user).order_by('nome')
+    perfil_usuario = perfil_do_usuario(user)
+    if perfil_usuario is None:
+        return propriedades.none()
+
+    return propriedades.filter(usuario=perfil_usuario).order_by('nome')
 
 
 @login_required
@@ -55,11 +68,16 @@ def busca_propriedades(request):
 @login_required
 @require_http_methods(['GET', 'POST'])
 def cadastro_propriedade(request):
+    perfil_usuario = perfil_do_usuario(request.user)
+    if perfil_usuario is None:
+        messages.error(request, 'Complete seu perfil antes de cadastrar uma propriedade.')
+        return redirect('accounts:perfil')
+
     form = PropriedadeForm(request.POST or None)
 
     if request.method == 'POST' and form.is_valid():
         propriedade = form.save(commit=False)
-        propriedade.usuario = request.user
+        propriedade.usuario = perfil_usuario
         propriedade.save()
         messages.success(request, 'Propriedade cadastrada com sucesso.')
         return redirect('propriedade:listar')

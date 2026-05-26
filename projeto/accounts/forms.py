@@ -209,7 +209,7 @@ class PerfilUsuarioForm(DadosUsuarioMixin):
 class AdminUsuarioForm(DadosUsuarioMixin):
     perfil = forms.ChoiceField(label='Perfil', choices=Perfil.choices)
     is_active = forms.BooleanField(label='Usuario ativo', required=False)
-    is_staff = forms.BooleanField(label='Acesso ao Django admin', required=False)
+    is_staff = forms.BooleanField(label='Acesso administrador', required=False)
     senha1 = forms.CharField(
         label='Senha',
         strip=False,
@@ -233,9 +233,21 @@ class AdminUsuarioForm(DadosUsuarioMixin):
         if self.user_instance is None:
             self.fields['senha1'].required = True
             self.fields['senha2'].required = True
+        elif not self.pode_editar_senha():
+            self.fields.pop('senha1')
+            self.fields.pop('senha2')
+        else:
+            self.fields['senha1'].help_text = 'Preencha apenas se quiser alterar sua senha.'
         if not (actor and actor.is_superuser):
             self.fields.pop('is_staff')
         self.aplicar_classes()
+
+    def pode_editar_senha(self):
+        return self.user_instance is None or (
+            self.actor
+            and self.user_instance
+            and self.actor.pk == self.user_instance.pk
+        )
 
     def clean_senha2(self):
         senha1 = self.cleaned_data.get('senha1')

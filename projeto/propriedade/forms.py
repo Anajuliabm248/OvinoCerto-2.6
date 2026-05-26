@@ -5,17 +5,74 @@ from .models import Propriedade
 
 class PropriedadeForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
-        super(PropriedadeForm, self).__init__(*args, **kwargs)
-        for field in self.fields:
-            self.fields[field].widget.attrs['class'] = 'form-control'
-            
-        self.fields['nome'].widget.attrs.update({'placeholder': 'Nome da propriedade'}, {'label': 'Nome da propriedade*'}, {'required': 'true'})
-        self.fields['cnpj'].widget.attrs.update({'placeholder': ''}, {'label': '00.000.000/0000-00 (opcional)'}, {'required': 'false'}, {'class': 'cnpj-mask'})
-        self.fields['proprietario'].widget.attrs.update({'placeholder': 'Nome do proprietário'}, {'label': 'Nome do proprietário*'}, {'required': 'true'})
-        self.fields['telefone'].widget.attrs.update({'placeholder': '(00) 00000-0000 (opcional)'}, {'label': 'Telefone (opcional)'}, {'required': 'false'}, {'class': 'phone-mask'} )
-        self.fields['uf'].widget.attrs.update({'placeholder': 'UF'}, {'label': 'UF*'}, {'required': 'true'}, {'maxlength': '2'}, {'minlength': '2'}, {'text-transform': 'uppercase'}, {'pattern': '[A-Za-z]{2}'}, {'title': 'Digite a sigla do estado (2 letras)'})
-        self.fields['cidade'].widget.attrs.update({'placeholder': 'Cidade'}, {'label': 'Cidade*'}, {'required': 'true'})
-        self.fields['localidade'].widget.attrs.update({'placeholder': 'Localidade'}, {'label': 'Localidade*'}, {'required': 'true'}, {'title': 'Digite o bairro, vila ou área rural da propriedade'})
+        super().__init__(*args, **kwargs)
+
+        field_options = {
+            'nome': {
+                'label': 'Nome da propriedade',
+                'required': True,
+                'attrs': {'placeholder': 'Nome da propriedade'},
+            },
+            'cnpj': {
+                'label': 'CNPJ (opcional)',
+                'required': False,
+                'attrs': {
+                    'placeholder': '00.000.000/0000-00',
+                    'class': 'cnpj-mask',
+                },
+            },
+            'proprietario': {
+                'label': 'Nome do proprietário',
+                'required': True,
+                'attrs': {'placeholder': 'Nome do proprietário'},
+            },
+            'telefone': {
+                'label': 'Telefone (opcional)',
+                'required': False,
+                'attrs': {
+                    'placeholder': '(00) 00000-0000',
+                    'class': 'phone-mask',
+                },
+            },
+            'uf': {
+                'label': 'UF',
+                'required': True,
+                'attrs': {
+                    'placeholder': 'UF',
+                    'maxlength': '2',
+                    'minlength': '2',
+                    'style': 'text-transform: uppercase;',
+                    'pattern': '[A-Za-z]{2}',
+                    'title': 'Digite a sigla do estado (2 letras)',
+                },
+            },
+            'cidade': {
+                'label': 'Cidade',
+                'required': True,
+                'attrs': {'placeholder': 'Cidade'},
+            },
+            'localidade': {
+                'label': 'Localidade',
+                'required': True,
+                'attrs': {
+                    'placeholder': 'Localidade',
+                    'title': 'Digite o bairro, vila ou área rural da propriedade',
+                },
+            },
+        }
+
+        for name, field in self.fields.items():
+            options = field_options[name]
+            field.label = options['label']
+            field.required = options['required']
+
+            attrs = {'class': 'form-control'}
+            extra_attrs = options['attrs'].copy()
+            extra_class = extra_attrs.pop('class', None)
+            if extra_class:
+                attrs['class'] = f"{attrs['class']} {extra_class}"
+            attrs.update(extra_attrs)
+            field.widget.attrs.update(attrs)
         
     class Meta:
         model = Propriedade
