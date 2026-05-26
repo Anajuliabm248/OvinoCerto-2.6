@@ -1,6 +1,6 @@
 from django.db import models
 
-from django.conf import settings
+from accounts.models import Usuario
 
 # Create your models here.
 '''
@@ -20,7 +20,7 @@ date dt_atualizacao
 
 class Propriedade(models.Model):
     usuario = models.ForeignKey(
-        settings.AUTH_USER_MODEL, 
+        Usuario, 
         on_delete=models.CASCADE, 
         related_name='propriedades',
     )

@@ -1,12 +1,11 @@
-from importlib.resources import path
-from django.urls import include
-from rest_framework import DefaultRouter
-from .views import PropriedadeViewSet
+from django.urls import path
+from . import views
 
-router = DefaultRouter()
-router.register(r'propriedades', PropriedadeViewSet, basename='propriedade')
+app_name = 'propriedade'
 
-# as URLs do viewset são automaticamente geradas pelo router
 urlpatterns = [
-    path('propriedades/', include(router.urls)),
+    path('', views.listar, name='listar'),
+    path('cadastrar/', views.cadastro_propriedade, name='cadastrar'),
+    path('<int:propriedade_id>/editar/', views.editar_propriedade, name='editar'),
+    path('<int:propriedade_id>/excluir/', views.excluir_propriedade, name='excluir'),
 ]

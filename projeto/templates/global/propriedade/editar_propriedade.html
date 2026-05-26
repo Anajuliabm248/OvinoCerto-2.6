@@ -2,14 +2,13 @@
 
 {% block content %}
     <section class="panel form-panel">
-        <h1>Login</h1>
+        <h1>Editar Propriedade</h1>
         <form method="post" novalidate>
             {% csrf_token %}
-            <input type="hidden" name="next" value="{{ next }}">
             {% include 'global/partials/_form_field.html' %}
             <div class="actions">
-                <button class="button" type="submit">Entrar</button>
-                <a class="button button-secondary" href="{% url 'accounts:cadastro' %}">Cadastrar</a>
+                <button class="button" type="submit">Salvar</button>
+                <a class="button button-secondary" href="{% url 'propriedade:listar' %}">Cancelar</a>
             </div>
         </form>
     </section>

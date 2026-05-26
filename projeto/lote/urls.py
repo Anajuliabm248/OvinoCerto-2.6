@@ -1,10 +1,11 @@
-from django.urls import include, path
-from rest_framework import DefaultRouter
-from .views import LoteViewSet
+from django.urls import path
+from . import views
 
-router = DefaultRouter()
-router.register(r'lotes', LoteViewSet, basename='lote')
+app_name = 'lote'
 
 urlpatterns = [
-    path('lotes/', include(router.urls)),
+    path('<int:propriedade_id>/', views.listar, name='listar'),
+    path('<int:propriedade_id>/cadastrar/', views.cadastrar, name='cadastrar'),
+    path('<int:lote_id>/editar/', views.editar, name='editar'),
+    path('<int:lote_id>/excluir/', views.excluir, name='excluir'),
 ]

@@ -1,0 +1,77 @@
+{% if form.non_field_errors %}
+  <div class="form-errors">
+    {% for error in form.non_field_errors %}
+      <p>{{ error }}</p>
+    {% endfor %}
+  </div>
+{% endif %}
+
+{% for field in form %}
+  <div class="form-field">
+    {% if field.field.widget.input_type == 'checkbox' %}
+      <label class="checkbox-label" for="{{ field.id_for_label }}">{{ field }} {{ field.label }}</label>
+    {% else %}
+      <label for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %} <span class="required">*</span>{% endif %}</label>
+      {{ field }}
+    {% endif %}
+    {% if field.help_text %}
+      <small class="help-text">{{ field.help_text|safe }}</small>
+    {% endif %}
+    {% for error in field.errors %}
+      <p class="field-error">{{ error }}</p>
+    {% endfor %}
+  </div>
+{% endfor %}
+
+<script>
+  function limparNumeros(valor) {
+    return valor.replace(/\D/g, '');
+  }
+
+  function mascaraTelefone(valor) {
+    valor = limparNumeros(valor);
+    if (valor.length <= 10) {
+      valor = valor.replace(/^(\d{2})(\d)/, '($1) $2');
+      valor = valor.replace(/(\d{4})(\d)/, '$1-$2');
+    } else {
+      valor = valor.replace(/^(\d{2})(\d)/, '($1) $2');
+      valor = valor.replace(/(\d{5})(\d)/, '$1-$2');
+    }
+    return valor;
+  }
+
+  function mascaraCnpj(valor) {
+    valor = limparNumeros(valor);
+    valor = valor.replace(/^(\d{2})(\d)/, '$1.$2');
+    valor = valor.replace(/^(\d{2})\.(\d{3})(\d)/, '$1.$2.$3');
+    valor = valor.replace(/\.(\d{3})(\d)/, '.$1/$2');
+    valor = valor.replace(/(\d{4})(\d)/, '$1-$2');
+    return valor;
+  }
+
+  function mascaraCpf(valor) {
+    valor = limparNumeros(valor);
+    valor = valor.replace(/(\d{3})(\d)/, '$1.$2');
+    valor = valor.replace(/(\d{3})(\d)/, '$1.$2');
+    valor = valor.replace(/(\d{3})(\d{1,2})$/, '$1-$2');
+    return valor;
+  }
+
+  document.querySelectorAll('.phone-mask').forEach(function(el) {
+    el.addEventListener('input', function(e) {
+      e.target.value = mascaraTelefone(e.target.value);
+    });
+  });
+
+  document.querySelectorAll('.cnpj-mask').forEach(function(el) {
+    el.addEventListener('input', function(e) {
+      e.target.value = mascaraCnpj(e.target.value);
+    });
+  });
+
+  document.querySelectorAll('.cpf-mask').forEach(function(el) {
+    el.addEventListener('input', function(e) {
+      e.target.value = mascaraCpf(e.target.value);
+    });
+  });
+</script>

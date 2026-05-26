@@ -1,44 +1,122 @@
-from django.shortcuts import render
-from rest_framework import viewsets, permissions
-from rest_framework.exceptions import PermissionDenied
+from django.contrib import messages
+from django.contrib.auth.decorators import login_required
+from django.core.paginator import Paginator
+from django.db.models import Q
+from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
+from django.views.decorators.http import require_http_methods
+
+from .forms import PropriedadeForm
 from .models import Propriedade
-from .serializers import PropriedadeSerializer
 
-# Create your views here.
 
-class PropriedadeViewSet(viewsets.ModelViewSet):
-    serializer_class = PropriedadeSerializer
-    permission_classes = [permissions.IsAuthenticated]
-    
-    def get_queryset(self):
-        user = self.request.user
-        # se for adm pode ver todas as propriedades, caso contrário só as suas
-        if user.admin:
-            return Propriedade.objects.all()
-        return Propriedade.objects.filter(usuario=user)
+def propriedades_do_usuario(user):
+    propriedades = Propriedade.objects.select_related('usuario')
 
-    def perform_create(self, serializer):
-        # liga o usuário autenticado à propriedade criada
-        serializer.save(usuario=self.request.user)
-        
-    def perform_update(self, serializer):
-        # só permite atualizar se for o dono da propriedade (adm não pode editar, mas vou perguntar sobre isso depois)
-        instance = self.get_object()
-        user = self.request.user
-        if instance.usuario != user:
-            raise PermissionDenied("Você não tem permissão para editar esta propriedade.")
-        serializer.save()
-        
-    def perform_destroy(self, instance):
-        # só permite deletar se for o dono da propriedade
-        user = self.request.user
-        if instance.usuario != user:
-            raise PermissionDenied("Você não tem permissão para deletar esta propriedade.")
-        instance.delete()
-        
-    def get_object(self):
-        obj = super().get_object()
-        user = self.request.user
-        if not user.admin and obj.usuario != user:
-            raise PermissionDenied("Você não tem permissão para acessar esta propriedade.")
-        return obj
+    if user.is_superuser:
+        return propriedades.order_by('nome')
+
+    return propriedades.filter(usuario=user).order_by('nome')
+
+
+@login_required
+def listar(request):
+    busca = request.GET.get('busca', '').strip()
+    propriedades = propriedades_do_usuario(request.user)
+
+    if busca:
+        propriedades = propriedades.filter(
+            Q(nome__icontains=busca)
+            | Q(cnpj__icontains=busca)
+            | Q(proprietario__icontains=busca)
+            | Q(telefone__icontains=busca)
+            | Q(uf__icontains=busca)
+            | Q(cidade__icontains=busca)
+            | Q(localidade__icontains=busca)
+        )
+
+    paginator = Paginator(propriedades, 10)
+    page_number = request.GET.get('page')
+    page_obj = paginator.get_page(page_number)
+
+    context = {
+        'title': 'Propriedades',
+        'page_obj': page_obj,
+        'busca': busca,
+    }
+    return render(request, 'global/propriedade/propriedades.html', context)
+
+
+@login_required
+def busca_propriedades(request):
+    return listar(request)
+
+
+@login_required
+@require_http_methods(['GET', 'POST'])
+def cadastro_propriedade(request):
+    form = PropriedadeForm(request.POST or None)
+
+    if request.method == 'POST' and form.is_valid():
+        propriedade = form.save(commit=False)
+        propriedade.usuario = request.user
+        propriedade.save()
+        messages.success(request, 'Propriedade cadastrada com sucesso.')
+        return redirect('propriedade:listar')
+
+    return render(
+        request,
+        'global/propriedade/cadastro.html',
+        {
+            'title': 'Cadastro',
+            'form': form,
+        },
+    )
+
+
+@login_required
+@require_http_methods(['GET', 'POST'])
+def editar_propriedade(request, propriedade_id):
+    propriedade = get_object_or_404(
+        propriedades_do_usuario(request.user),
+        id=propriedade_id,
+    )
+    form = PropriedadeForm(request.POST or None, instance=propriedade)
+
+    if request.method == 'POST' and form.is_valid():
+        form.save()
+        messages.success(request, 'Propriedade editada com sucesso.')
+        return redirect('propriedade:listar')
+
+    return render(
+        request,
+        'global/propriedade/editar_propriedade.html',
+        {
+            'form': form,
+            'title': 'Editar Propriedade',
+        },
+    )
+
+
+@login_required
+@require_http_methods(['GET', 'POST'])
+def excluir_propriedade(request, propriedade_id):
+    propriedade = get_object_or_404(
+        propriedades_do_usuario(request.user),
+        id=propriedade_id,
+    )
+
+    if request.method == 'POST':
+        propriedade.delete()
+        messages.success(request, 'Propriedade excluida com sucesso.')
+        return redirect('propriedade:listar')
+
+    return render(
+        request,
+        'global/propriedade/propriedade_confirm_delete.html',
+        {
+            'title': 'Excluir Propriedade',
+            'propriedade': propriedade,
+            'cancelar_url': reverse('propriedade:listar'),
+        },
+    )

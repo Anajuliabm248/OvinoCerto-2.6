@@ -5,7 +5,7 @@
         <h1>{{ title }}</h1>
         <form method="post" novalidate>
             {% csrf_token %}
-            {% include 'global/partials/_form_fields.html' %}
+            {% include 'global/partials/_form_field.html' %}
             <div class="actions">
                 <button class="button" type="submit">{{ acao }}</button>
                 <a class="button button-secondary" href="{% url 'accounts:usuarios' %}">Cancelar</a>

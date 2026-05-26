@@ -30,7 +30,6 @@ INSTALLED_APPS = [
     'accounts.apps.AccountsConfig',
     'propriedade.apps.PropriedadeConfig',
     'lote.apps.LoteConfig',
-    'rest_framework',
 ]
 
 MIDDLEWARE = [

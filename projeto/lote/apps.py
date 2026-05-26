@@ -1,5 +1,5 @@
 from django.apps import AppConfig
 
 
-class FlockConfig(AppConfig):
-    name = 'flock'
+class LoteConfig(AppConfig):
+    name = 'lote'

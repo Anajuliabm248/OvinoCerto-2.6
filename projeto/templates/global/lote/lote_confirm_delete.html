@@ -1,0 +1,16 @@
+{% extends 'global/base.html' %}
+
+{% block content %}
+  <section class="panel form-panel">
+    <h1>Excluir Lote</h1>
+    <p>Confirme a exclusão do lote <strong>{{ lote.nome_lote }}</strong> da propriedade <strong>{{ propriedade.nome }}</strong>.</p>
+    <p class="field-error">Esta ação não pode ser desfeita.</p>
+    <form method="post">
+      {% csrf_token %}
+      <div class="actions">
+        <button class="button button-danger" type="submit">Excluir</button>
+        <a class="button button-secondary" href="{{ cancelar_url }}">Cancelar</a>
+      </div>
+    </form>
+  </section>
+{% endblock %}

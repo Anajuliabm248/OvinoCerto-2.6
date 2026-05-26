@@ -1,3 +1,6 @@
+from logging import PlaceHolder
+from pydoc import plain
+
 from django import forms
 from django.contrib.auth import authenticate, get_user_model, password_validation
 from django.contrib.auth.password_validation import validate_password
@@ -21,13 +24,29 @@ class FormControlMixin:
 
 # Formulário base para cadastro e edição de usuários, com validações comuns
 class DadosUsuarioMixin(FormControlMixin, forms.Form):
-    nome = forms.CharField(label='Nome', max_length=100, required=True)
-    email = forms.EmailField(label='E-mail', required=True)  # Será usado como username também
-    cpf = forms.CharField(label='CPF ou CNPJ', max_length=14, required=True)
-    telefone = forms.CharField(label='Telefone', max_length=15, required=True)
-    estado = forms.CharField(label='Estado', max_length=50, required=True)
-    cidade = forms.CharField(label='Cidade', max_length=50, required=True)
-    profissao = forms.CharField(label='Profissao', max_length=100, required=True)
+    nome = forms.CharField(label='Nome*', max_length=100, required=True,  widget=forms.TextInput(attrs={
+        'placeholder': 'Digite seu nome completo',
+    }))
+    email = forms.EmailField(label='E-mail*', required=True, widget=forms.EmailInput(attrs={
+        'placeholder': 'Digite seu e-mail',
+    }))  # Será usado como username também
+    cpf = forms.CharField(label='CPF ou CNPJ*', max_length=18, required=True, widget=forms.TextInput(attrs={
+        'placeholder': '000.000.000-00 ou 00.000.000/0000-00',
+        'id': 'cpf_cnpj-mask',
+    }))
+    telefone = forms.CharField(label='Telefone*', max_length=15, required=True, widget=forms.TextInput(attrs={
+        'placeholder': '(00) 00000-0000',
+        'id': 'phone-mask',
+    }))
+    estado = forms.CharField(label='Estado*', max_length=50, required=True, widget=forms.TextInput(attrs={
+        'placeholder': 'Digite seu estado',
+    }))
+    cidade = forms.CharField(label='Cidade*', max_length=50, required=True, widget=forms.TextInput(attrs={
+        'placeholder': 'Digite sua cidade',
+    }))
+    profissao = forms.CharField(label='Profissao*', max_length=100, required=True, widget=forms.TextInput(attrs={
+        'placeholder': 'Digite sua profissão',
+    }))
     produtor_ovinos = forms.BooleanField(
         label='Produtor de ovinos',
         required=False,
