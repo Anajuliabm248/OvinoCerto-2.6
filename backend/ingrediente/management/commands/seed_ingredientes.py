@@ -46,8 +46,10 @@ COL_IDX = {
 
 EXCEL_PADRAO = os.path.join(
     os.path.dirname(__file__),
-    '..', '..', '..', '..', '..',
-    'OvinoCerto_CORDEIRO_BaseProgramaExcel__ARRUMADO0604.xlsx',
+    '..',
+    '..',
+    '..',
+    'base_ovino.xls',
 )
 
 
@@ -81,30 +83,61 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        try:
-            from openpyxl import load_workbook
-        except ImportError:
-            raise CommandError('openpyxl não instalado. Execute: pip install openpyxl')
-
         excel_path = os.path.abspath(options['excel'])
         if not os.path.isfile(excel_path):
             raise CommandError(f'Arquivo não encontrado: {excel_path}')
 
         self.stdout.write(f'Lendo: {excel_path}')
-        wb = load_workbook(excel_path, read_only=True, data_only=True)
+        _, ext = os.path.splitext(excel_path)
+        ext = ext.lower()
 
-        aba = options['aba']
-        if aba not in wb.sheetnames:
-            # Tenta encontrar aba com nome similar
-            match = next((s for s in wb.sheetnames if 'Bromatol' in s or 'Cust' in s), None)
-            if match:
-                aba = match
-                self.stdout.write(self.style.WARNING(f'Aba não encontrada; usando "{aba}"'))
-            else:
-                raise CommandError(
-                    f'Aba "{aba}" não encontrada. Abas disponíveis: {wb.sheetnames}'
-                )
-        ws = wb[aba]
+        # Prepare a unified rows iterator for both .xlsx (openpyxl) and .xls (xlrd)
+        if ext == '.xls':
+            try:
+                import xlrd
+            except ImportError:
+                raise CommandError('xlrd não instalado. Execute: pip install xlrd')
+
+            wb_xl = xlrd.open_workbook(excel_path, formatting_info=False)
+            sheet_names = wb_xl.sheet_names()
+            aba = options['aba']
+            if aba not in sheet_names:
+                match = next((s for s in sheet_names if 'Bromatol' in s or 'Cust' in s), None)
+                if match:
+                    aba = match
+                    self.stdout.write(self.style.WARNING(f'Aba não encontrada; usando "{aba}"'))
+                else:
+                    raise CommandError(
+                        f'Aba "{aba}" não encontrada. Abas disponíveis: {sheet_names}'
+                    )
+            ws = wb_xl.sheet_by_name(aba)
+
+            def rows_iterator():
+                for r in range(2, ws.nrows):
+                    yield tuple(ws.cell_value(r, c) for c in range(ws.ncols))
+
+            rows = rows_iterator()
+        else:
+            try:
+                from openpyxl import load_workbook
+            except ImportError:
+                raise CommandError('openpyxl não instalado. Execute: pip install openpyxl')
+
+            wb = load_workbook(excel_path, read_only=True, data_only=True)
+
+            aba = options['aba']
+            if aba not in wb.sheetnames:
+                # Tenta encontrar aba com nome similar
+                match = next((s for s in wb.sheetnames if 'Bromatol' in s or 'Cust' in s), None)
+                if match:
+                    aba = match
+                    self.stdout.write(self.style.WARNING(f'Aba não encontrada; usando "{aba}"'))
+                else:
+                    raise CommandError(
+                        f'Aba "{aba}" não encontrada. Abas disponíveis: {wb.sheetnames}'
+                    )
+            ws = wb[aba]
+            rows = ws.iter_rows(min_row=3, values_only=True)
 
         from ingrediente.models import Ingrediente
 
@@ -117,7 +150,7 @@ class Command(BaseCommand):
         ignorados = 0
         tipo_atual = None  # O Excel agrupa por tipo em linhas mescladas
 
-        for row in ws.iter_rows(min_row=3, values_only=True):
+        for row in rows:
             numero = row[COL_IDX['numero']]
             if not numero or not isinstance(numero, (int, float)):
                 # Pode ser uma linha de subtítulo de tipo (ex: "Forragens Verdes")

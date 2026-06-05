@@ -3,10 +3,11 @@ Importa as exigências nutricionais NRC (2007) da planilha Excel.
 
 Uso:
     python manage.py seed_exigencias
-    python manage.py seed_exigencias --excel /caminho/para/arquivo.xlsx
-    python manage.py seed_exigencias --limpar  # apaga tudo antes de importar
+    python manage.py seed_exigencias --excel backend/base_ovino.xls
+    python manage.py seed_exigencias --limpar   # apaga todas as exigências antes de importar
 """
 import os
+import unicodedata
 from django.core.management.base import BaseCommand, CommandError
 
 
@@ -28,16 +29,35 @@ FASE_MAP = {
     'Reprodução':        'reproducao',
     'Gestação precoce':  'gestacao_precoce',
     'Gestação tardia':   'gestacao_tardia',
-    'Início da lactação': 'inicio_lactacao',
-    'Meio da lactação':  'meio_lactacao',
+    'Início de lactação': 'inicio_lactacao',
+    'Meio de lactação':  'meio_lactacao',
     'Lactação tardia':   'lactacao_tardia',
     # Variações com acentos diferentes
     'Gestaçao precoce':  'gestacao_precoce',
     'Gestaçao tardia':   'gestacao_tardia',
-    'Inicio da lactaçao': 'inicio_lactacao',
-    'Meio da lactaçao':  'meio_lactacao',
+    'Inicio de lactaçao': 'inicio_lactacao',
+    'Meio de lactaçao':  'meio_lactacao',
     'Lactaçao tardia':   'lactacao_tardia',
 }
+
+
+def _normalize(s: str) -> str:
+    """Normalize string for comparison: lowercase, strip, remove accents, collapse spaces."""
+    if s is None:
+        return ''
+    if not isinstance(s, str):
+        s = str(s)
+    s = s.strip().lower()
+    # Remove accents
+    s = unicodedata.normalize('NFD', s)
+    s = ''.join(ch for ch in s if unicodedata.category(ch) != 'Mn')
+    # Collapse whitespace
+    s = ' '.join(s.split())
+    return s
+
+# Precompute normalized maps for resilient matching
+NORM_CATEGORIA_MAP = { _normalize(k): v for k, v in CATEGORIA_MAP.items() }
+NORM_FASE_MAP = { _normalize(k): v for k, v in FASE_MAP.items() }
 
 # Colunas do Excel (índices base-0):
 # 0=N°, 1=Categoria, 2=Fase, 3=PV, 4=Tipo_Parto, 5=PV_Nascer, 6=GMD,
@@ -69,9 +89,11 @@ COL_IDX = {
 }
 
 EXCEL_PADRAO = os.path.join(
-    os.path.dirname(__file__),              # commands/
-    '..', '..', '..', '..', '..',           # sobe até raiz do projeto
-    'OvinoCerto_CORDEIRO_BaseProgramaExcel__ARRUMADO0604.xlsx',
+    os.path.dirname(__file__),
+    '..',
+    '..',
+    '..',
+    'base_ovino.xls',
 )
 
 
@@ -121,24 +143,60 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        try:
-            from openpyxl import load_workbook
-        except ImportError:
-            raise CommandError('openpyxl não instalado. Execute: pip install openpyxl')
-
         excel_path = os.path.abspath(options['excel'])
         if not os.path.isfile(excel_path):
             raise CommandError(f'Arquivo não encontrado: {excel_path}')
 
         self.stdout.write(f'Lendo: {excel_path}')
-        wb = load_workbook(excel_path, read_only=True, data_only=True)
+        _, ext = os.path.splitext(excel_path)
+        ext = ext.lower()
 
-        aba = options['aba']
-        if aba not in wb.sheetnames:
-            raise CommandError(
-                f'Aba "{aba}" não encontrada. Abas disponíveis: {wb.sheetnames}'
-            )
-        ws = wb[aba]
+        if ext == '.xls':
+            try:
+                import xlrd
+            except ImportError:
+                raise CommandError('xlrd não instalado. Execute: pip install xlrd')
+
+            wb_xl = xlrd.open_workbook(excel_path, formatting_info=False)
+            sheet_names = wb_xl.sheet_names()
+            aba = options['aba']
+            if aba not in sheet_names:
+                match = next((s for s in sheet_names if 'Exig' in s or 'Nutri' in s), None)
+                if match:
+                    aba = match
+                    self.stdout.write(self.style.WARNING(f'Aba não encontrada; usando "{aba}"'))
+                else:
+                    raise CommandError(
+                        f'Aba "{aba}" não encontrada. Abas disponíveis: {sheet_names}'
+                    )
+            ws = wb_xl.sheet_by_name(aba)
+
+            def rows_iterator():
+                # original used min_row=5 (1-based), so start at index 4
+                for r in range(4, ws.nrows):
+                    yield tuple(ws.cell_value(r, c) for c in range(ws.ncols))
+
+            rows = rows_iterator()
+        else:
+            try:
+                from openpyxl import load_workbook
+            except ImportError:
+                raise CommandError('openpyxl não instalado. Execute: pip install openpyxl')
+
+            wb = load_workbook(excel_path, read_only=True, data_only=True)
+
+            aba = options['aba']
+            if aba not in wb.sheetnames:
+                match = next((s for s in wb.sheetnames if 'Exig' in s or 'Nutri' in s), None)
+                if match:
+                    aba = match
+                    self.stdout.write(self.style.WARNING(f'Aba não encontrada; usando "{aba}"'))
+                else:
+                    raise CommandError(
+                        f'Aba "{aba}" não encontrada. Abas disponíveis: {wb.sheetnames}'
+                    )
+            ws = wb[aba]
+            rows = ws.iter_rows(min_row=5, values_only=True)
 
         from exigencia_nrc.models import ExigenciaNRC
 
@@ -149,17 +207,20 @@ class Command(BaseCommand):
         criados = 0
         ignorados = 0
 
-        for row in ws.iter_rows(min_row=5, values_only=True):
+        for row in rows:
             # Ignora linhas sem número válido (cabeçalho, vazias, etc.)
             numero = row[COL_IDX['numero']]
             if not numero or not isinstance(numero, (int, float)):
                 continue
 
-            cat_excel  = str(row[COL_IDX['categoria']] or '').strip()
-            fase_excel = str(row[COL_IDX['fase']] or '').strip()
+            cat_excel  = row[COL_IDX['categoria']]
+            fase_excel = row[COL_IDX['fase']]
 
-            categoria = CATEGORIA_MAP.get(cat_excel)
-            fase      = FASE_MAP.get(fase_excel)
+            cat_norm = _normalize(cat_excel)
+            fase_norm = _normalize(fase_excel)
+
+            categoria = NORM_CATEGORIA_MAP.get(cat_norm)
+            fase      = NORM_FASE_MAP.get(fase_norm)
 
             if not categoria:
                 self.stdout.write(
