@@ -4,7 +4,7 @@ from .models import Propriedade
 
 class PropriedadeSerializer(serializers.ModelSerializer):
     usuario_nome = serializers.CharField(source='usuario.nome', read_only=True)
-    
+
     class Meta:
         model = Propriedade
         fields = [
@@ -21,4 +21,5 @@ class PropriedadeSerializer(serializers.ModelSerializer):
             'dt_cadastro',
             'dt_atualizacao',
         ]
-        read_only_fields = ['id', 'dt_cadastro', 'dt_atualizacao']
+        # usuario é setado automaticamente via perform_create no viewset
+        read_only_fields = ['id', 'usuario', 'usuario_nome', 'dt_cadastro', 'dt_atualizacao']

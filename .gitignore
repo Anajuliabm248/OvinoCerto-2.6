@@ -1,6 +1,3 @@
-
-
-### Code ###
 # Visual Studio Code - https://code.visualstudio.com/
 .settings/
 .vscode/
@@ -14,3 +11,11 @@ db.sqlite3
 static/
 media/
 diagramas/
+
+# Django stuff
+*.log
+*.pot
+*.pyc
+__pycache__/
+
+

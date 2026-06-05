@@ -1,17 +1,13 @@
 from django.db import models
 
 CATEGORIA_CHOICES = [
-    ('cordeiro', 'Cordeiro'),
-    ('carneiro', 'Carneiro'),
-    ('ovelha', 'Ovelha'),
-]
-
-IDADE_CHOICES = [
-    ('ate_4_meses', '0–4 meses'),
-    ('ate_8_meses', '5–8 meses'),
-    ('ate_12_meses', '9–12 meses'),
-    ('mais_12_meses', '13 meses ou mais'),
-]
+    ('cordeiros_4_meses', 'Cordeiros(as) 4 meses'),
+    ('cordeiros_8_meses', 'Cordeiros(as) 8 meses'),
+    ('carneiro_4_meses', 'Carneiro 4 meses'),
+    ('carneiro_8_meses', 'Carneiro 8 meses'),
+    ('carneiros', 'Carneiros'),
+    ('ovelhas', 'Ovelhas'),
+]   
 
 FASE_CHOICES = [
     ('crescimento', 'Crescimento'),
@@ -33,29 +29,17 @@ TIPO_PARTO_CHOICES = [
     (5, '5 Cordeiros'),
 ]
 
-# Fases válidas por categoria e faixa de idade
+# Fases válidas por categoria
 FASES_VALIDAS = {
-    'cordeiro': {
-        'ate_4_meses': ['crescimento'],
-        'ate_8_meses': ['crescimento'],
-        'ate_12_meses': ['crescimento'],
-        'mais_12_meses': ['crescimento'],
-    },
-    'carneiro': {
-        'ate_4_meses': ['crescimento'],
-        'ate_8_meses': ['crescimento'],
-        'ate_12_meses': ['crescimento', 'manutencao'],
-        'mais_12_meses': ['manutencao', 'pre_cobricao'],
-    },
-    'ovelha': {
-        'ate_4_meses': ['crescimento'],
-        'ate_8_meses': ['crescimento'],
-        'ate_12_meses': ['crescimento', 'manutencao'],
-        'mais_12_meses': [
-            'manutencao', 'reproducao', 'gestacao_precoce',
-            'gestacao_tardia', 'inicio_lactacao', 'meio_lactacao', 'lactacao_tardia',
-        ],
-    },
+    'cordeiros_4_meses': ['crescimento'],
+    'cordeiros_8_meses': ['crescimento'],
+    'carneiro_4_meses': ['crescimento'],
+    'carneiro_8_meses': ['crescimento'],
+    'carneiros': ['manutencao', 'pre_cobricao', 'reproducao'],
+    'ovelhas': [
+        'manutencao', 'pre_cobricao', 'reproducao', 'gestacao_precoce',
+        'gestacao_tardia', 'inicio_lactacao', 'meio_lactacao', 'lactacao_tardia',
+    ],
 }
 
 # Fases que exigem tipo_parto e dias_fase (apenas ovelhas)
@@ -75,7 +59,6 @@ class Lote(models.Model):
     raca = models.CharField(max_length=100, blank=True, null=True, verbose_name='Raça')
     sistema = models.CharField(max_length=100, blank=True, null=True, verbose_name='Sistema de criação')
     categoria = models.CharField(max_length=20, choices=CATEGORIA_CHOICES, verbose_name='Categoria')
-    idade = models.CharField(max_length=20, choices=IDADE_CHOICES, verbose_name='Faixa etária')
     fase = models.CharField(max_length=20, choices=FASE_CHOICES, verbose_name='Fase produtiva')
     tipo_parto = models.PositiveSmallIntegerField(
         choices=TIPO_PARTO_CHOICES,

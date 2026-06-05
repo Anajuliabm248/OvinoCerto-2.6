@@ -1,28 +1,38 @@
 from django.contrib import admin
 from django.urls import include, path
-from django.conf.urls.static import static
 from django.conf import settings
+from django.conf.urls.static import static
 from rest_framework.routers import DefaultRouter
+from rest_framework_simplejwt.views import TokenRefreshView
 
-from accounts.viewsets import UsuarioViewSet
+from accounts.viewsets import UsuarioViewSet, RegisterView, LoginView
 from propriedade.viewsets import PropriedadeViewSet
 from lote.viewsets import LoteViewSet
+from exigencia_nrc.viewsets import ExigenciaNRCViewSet
+from ingrediente.viewsets import IngredienteViewSet
 
-# Criar router para as APIs
 router = DefaultRouter()
-router.register(r'usuarios', UsuarioViewSet, basename='usuario')
+router.register(r'usuarios',    UsuarioViewSet,      basename='usuario')
 router.register(r'propriedades', PropriedadeViewSet, basename='propriedade')
-router.register(r'lotes', LoteViewSet, basename='lote')
+router.register(r'lotes',        LoteViewSet,        basename='lote')
+router.register(r'exigencias',   ExigenciaNRCViewSet, basename='exigencia')
+router.register(r'ingredientes', IngredienteViewSet,  basename='ingrediente')
 
 urlpatterns = [
+    # Admin Django
     path('admin/', admin.site.urls),
-    path('api/', include(router.urls)),
-    path('api-auth/', include('rest_framework.urls')),
-    # URLs tradicionais (manter para compatibilidade)
-    path('', include('accounts.urls')),
-    path('propriedade/', include('propriedade.urls')),
-    path('lote/', include('lote.urls')),
-]  
 
-urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+    # Autenticação JWT
+    path('api/auth/login/',   LoginView.as_view(),      name='auth-login'),
+    path('api/auth/register/', RegisterView.as_view(),  name='auth-register'),
+    path('api/auth/refresh/',  TokenRefreshView.as_view(), name='auth-refresh'),
+
+    # API REST
+    path('api/', include(router.urls)),
+
+    # Browser API (login do DRF browsable)
+    path('api-auth/', include('rest_framework.urls')),
+]
+
+urlpatterns += static(settings.MEDIA_URL,  document_root=settings.MEDIA_ROOT)
 urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)

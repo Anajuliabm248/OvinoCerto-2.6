@@ -1,0 +1,15 @@
+Django>=4.2
+djangorestframework
+djangorestframework-simplejwt
+psycopg2-binary
+Pillow
+python-dotenv
+gunicorn
+whitenoise
+django-cors-headers
+openpyxl
+scipy
+numpy
+pylint
+pytest
+pytest-django
