@@ -10,7 +10,7 @@ from .serializers import UsuarioSerializer, RegisterSerializer, LoginSerializer
 
 
 class RegisterView(generics.CreateAPIView):
-    """POST /api/auth/register/  →  cria usuário e devolve tokens JWT."""
+    """POST /api/auth/register/ ->  cria usuário e devolve tokens JWT."""
     serializer_class = RegisterSerializer
     permission_classes = [AllowAny]
 
@@ -30,7 +30,7 @@ class RegisterView(generics.CreateAPIView):
         )
 
 class LoginView(generics.GenericAPIView):
-    """POST /api/auth/login/  →  valida credenciais e devolve tokens JWT."""
+    """POST /api/auth/login/  ->  valida credenciais e devolve tokens JWT."""
     serializer_class = LoginSerializer
     permission_classes = [AllowAny]
 
@@ -80,7 +80,7 @@ class UsuarioViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
     def me(self, request):
-        """GET /api/usuarios/me/  →  perfil do usuário autenticado."""
+        """GET /api/usuarios/me/  ->  perfil do usuário autenticado."""
         try:
             usuario = request.user.perfil_usuario
             return Response(UsuarioSerializer(usuario).data)

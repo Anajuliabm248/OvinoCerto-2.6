@@ -26,7 +26,6 @@ INSTALLED_APPS = [
     'propriedade.apps.PropriedadeConfig',
     'lote.apps.LoteConfig',
     'exigencia_nrc.apps.ExigenciaNrcConfig',
-    'formulacao.apps.FormulacaoConfig',
     'ingrediente.apps.IngredienteConfig',
 ]
 

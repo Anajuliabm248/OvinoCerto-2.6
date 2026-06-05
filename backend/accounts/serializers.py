@@ -32,14 +32,13 @@ class UsuarioSerializer(serializers.ModelSerializer):
 
 
 class RegisterSerializer(serializers.Serializer):
-    # Credenciais Django
-    username = serializers.CharField(max_length=150)
+    # Credenciais Django (usar apenas o email como username)
     password = serializers.CharField(write_only=True, validators=[validate_password])
     password2 = serializers.CharField(write_only=True, label='Confirmar senha')
 
     # Campos do perfil
     nome           = serializers.CharField(max_length=100)
-    email          = serializers.EmailField()
+    email          = serializers.EmailField(max_length=255)
     cpf            = serializers.CharField(max_length=14)
     telefone       = serializers.CharField(max_length=15)
     estado         = serializers.CharField(max_length=50)
@@ -47,14 +46,12 @@ class RegisterSerializer(serializers.Serializer):
     profissao      = serializers.CharField(max_length=100)
     produtor_ovinos = serializers.BooleanField(default=False)
 
-    def validate_username(self, value):
-        if DjangoUser.objects.filter(username=value).exists():
-            raise serializers.ValidationError('Este username já está em uso.')
-        return value
-
     def validate_email(self, value):
+        # Email must be unique both as Usuario.email and as Django username/email
         if Usuario.objects.filter(email=value).exists():
             raise serializers.ValidationError('Este e-mail já está cadastrado.')
+        if DjangoUser.objects.filter(username=value).exists() or DjangoUser.objects.filter(email=value).exists():
+            raise serializers.ValidationError('Este e-mail já está em uso como usuário.')
         return value
 
     def validate_cpf(self, value):
@@ -68,28 +65,28 @@ class RegisterSerializer(serializers.Serializer):
         return attrs
 
     def create(self, validated_data):
-        # Separar campos Django user vs perfil
-        username = validated_data.pop('username')
+        # Use email as the Django username
+        email = validated_data.pop('email')
         password = validated_data.pop('password')
 
         django_user = DjangoUser.objects.create_user(
-            username=username,
+            username=email,
+            email=email,
             password=password,
-            email=validated_data.get('email', ''),
         )
 
-        usuario = Usuario.objects.create(user=django_user, **validated_data)
+        usuario = Usuario.objects.create(user=django_user, email=email, **validated_data)
         return usuario
 
 
 class LoginSerializer(serializers.Serializer):
-    username = serializers.CharField()
+    email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
 
     def validate(self, attrs):
         from django.contrib.auth import authenticate
         user = authenticate(
-            username=attrs['username'],
+            username=attrs['email'],
             password=attrs['password'],
         )
         if not user:
