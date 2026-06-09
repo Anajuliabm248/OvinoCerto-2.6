@@ -27,6 +27,7 @@ INSTALLED_APPS = [
     'lote.apps.LoteConfig',
     'exigencia_nrc.apps.ExigenciaNrcConfig',
     'ingrediente.apps.IngredienteConfig',
+    'formulacao.apps.FormulacaoConfig',
 ]
 
 MIDDLEWARE = [
