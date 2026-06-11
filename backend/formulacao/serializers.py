@@ -10,11 +10,6 @@ from .models import (
 
 OBJETIVO_KEYS = [k for k, _ in OBJETIVO_CHOICES]
 
-
-# ──────────────────────────────────────────────────────────────────────
-# INPUT
-# ──────────────────────────────────────────────────────────────────────
-
 class FormulacaoCreateSerializer(serializers.Serializer):
     """Dados de entrada para criar uma formulação."""
     lote_id                  = serializers.IntegerField()
@@ -32,10 +27,6 @@ class FormulacaoCreateSerializer(serializers.Serializer):
     def validate_objetivo_otimizacao(self, value):
         return value.upper()
 
-
-# ──────────────────────────────────────────────────────────────────────
-# OUTPUT – modelos relacionados
-# ──────────────────────────────────────────────────────────────────────
 
 class IngredienteFormulacaoSerializer(serializers.ModelSerializer):
     ingrediente = IngredienteSerializer(read_only=True)
@@ -96,10 +87,6 @@ class CustoViabilidadeSerializer(serializers.ModelSerializer):
         ]
 
 
-# ──────────────────────────────────────────────────────────────────────
-# OUTPUT – Formulacao completa
-# ──────────────────────────────────────────────────────────────────────
-
 class FormulacaoDetailSerializer(serializers.ModelSerializer):
     lote      = LoteSerializer(read_only=True)
     exigencia = ExigenciaNRCSerializer(read_only=True)
@@ -136,30 +123,33 @@ class FormulacaoDetailSerializer(serializers.ModelSerializer):
 
     def get_atendimento_nutricional(self, obj):
         """
-        Compara os nutrientes obtidos (calculados a partir dos ingredientes)
-        com as exigências NRC do lote.
+        Compara os nutrientes obtidos com as exigências NRC.
 
-        Nutrientes como % da MS (média ponderada pelas frações MS%).
+        Fórmula: nutriente_% = (Σ nutriente_kg[i]) / cms_kg × 100
+
+        Usa os valores kg já persistidos em IngredienteFormulacao para
+        evitar erro de arredondamento acumulado via ms_porcent (2 casas).
         """
         if not obj.exigencia:
             return {}
 
-        # Somar frações ponderadas dos ingredientes salvos
-        totais = {n: 0.0 for n in ('PB', 'NDT', 'FDN', 'EE', 'Ca', 'P')}
-        soma_pct = 0.0
+        cms_kg = obj.exigencia.cms_kg
+        if not cms_kg or cms_kg <= 0:
+            return {}
 
-        for inf in obj.ingredientes_formulacao.select_related('ingrediente').all():
-            if not inf.ingrediente:
-                continue
-            frac = inf.ms_porcent / 100.0
-            soma_pct += inf.ms_porcent
-            ing = inf.ingrediente
-            totais['PB']  += frac * ing.pb
-            totais['NDT'] += frac * ing.ndt
-            totais['FDN'] += frac * ing.fdn
-            totais['EE']  += frac * ing.ee
-            totais['Ca']  += frac * ing.ca
-            totais['P']   += frac * ing.p
+        # Somar kg/dia de cada nutriente a partir dos registros salvos
+        totais = {n: 0.0 for n in ('PB', 'NDT', 'FDN', 'EE', 'Ca', 'P')}
+        for inf in obj.ingredientes_formulacao.all():
+            totais['PB']  += inf.pb_kg
+            totais['NDT'] += inf.ndt_kg
+            totais['FDN'] += inf.fdn_kg
+            totais['EE']  += inf.ee_kg
+            totais['Ca']  += inf.ca_kg
+            totais['P']   += inf.p_kg
+
+        # Converter kg/dia → % da MS:  nutriente% = (kg/dia) / CMS × 100
+        for nut in totais:
+            totais[nut] = totais[nut] / cms_kg * 100
 
         ex = obj.exigencia
         TOL = 0.05

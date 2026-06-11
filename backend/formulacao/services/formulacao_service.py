@@ -140,10 +140,11 @@ class FormulacaoService:
         x       = solucao['x']
         ing_map = {ing.id: ing for ing in ingredientes}
 
-        vol_ms   = 0.0
-        conc_ms  = 0.0
-        total_mn = 0.0
-        total_custo = 0.0
+        vol_ms        = 0.0
+        conc_ms       = 0.0
+        mistura_conc_mn = 0.0   # kg MN tal qual dos concentrados (para pesar na balança)
+        total_mn      = 0.0
+        total_custo   = 0.0
 
         for ing_id, fracao in x.items():
             if fracao < 1e-4:
@@ -184,17 +185,18 @@ class FormulacaoService:
             if ing.classificacao == 'volumoso':
                 vol_ms  += ms_pct
             else:
-                conc_ms += ms_pct
+                conc_ms         += ms_pct
+                mistura_conc_mn += mn_kg_ing   # kg MN tal qual do concentrado
 
             total_mn    += mn_kg_ing
             total_custo += custo_ing
 
         # Atualizar totais na Formulacao
-        formulacao.vol_ms_percent   = round(vol_ms,   2)
-        formulacao.conc_ms_percent  = round(conc_ms,  2)
-        formulacao.mistura_conc     = round(conc_ms / 100 * cms_kg, 4)
-        formulacao.rs_kg_mn_total   = round(total_mn, 4)
-        formulacao.custo_animal_dia = round(total_custo, 4)
+        formulacao.vol_ms_percent   = round(vol_ms,         2)
+        formulacao.conc_ms_percent  = round(conc_ms,        2)
+        formulacao.mistura_conc     = round(mistura_conc_mn, 4)  # kg MN tal qual concentrado/dia
+        formulacao.rs_kg_mn_total   = round(total_mn,       4)
+        formulacao.custo_animal_dia = round(total_custo,     4)
         formulacao.custo_lote_dia   = round(total_custo * lote.num_animais, 4)
         formulacao.save(update_fields=[
             'vol_ms_percent', 'conc_ms_percent', 'mistura_conc',
@@ -252,14 +254,26 @@ class FormulacaoService:
         if not usados or not candidatos:
             return []
 
+        # ── Fatores de normalização (max de cada nutriente no conjunto) ──
+        # Sem isso, NDT (0–100) domina a distância sobre Ca (0–3),
+        # fazendo ingredientes com Ca parecido mas NDT diferente parecerem próximos.
+        _ATTRS = ['pb', 'ndt', 'fdn', 'ee', 'ca', 'p']
+        todos  = list(usados.values()) + candidatos
+        maximos = {
+            a: max(getattr(ing, a, 0.0) for ing in todos) or 1.0
+            for a in _ATTRS
+        }
+
+        def _vec_norm(ing):
+            return np.array([getattr(ing, a, 0.0) / maximos[a] for a in _ATTRS])
+
         recs_data = []
         for cand in candidatos:
-            vec_c = np.array([cand.pb, cand.ndt, cand.fdn, cand.ee, cand.ca, cand.p])
+            vec_c = _vec_norm(cand)
             melhor_dist = None
             melhor_sub  = None
             for used_ing in usados.values():
-                vec_u = np.array([used_ing.pb, used_ing.ndt, used_ing.fdn,
-                                  used_ing.ee, used_ing.ca, used_ing.p])
+                vec_u = _vec_norm(used_ing)
                 dist = float(np.linalg.norm(vec_c - vec_u))
                 if melhor_dist is None or dist < melhor_dist:
                     melhor_dist = dist
