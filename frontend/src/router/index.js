@@ -14,6 +14,21 @@ const routes = [
     component: () => import('../pages/Login.vue'),
   },
   {
+    path: '/cadastro',
+    name: 'Cadastro',
+    component: () => import('../pages/Cadastro.vue'),
+  },
+  {
+    path: '/recuperar-senha',
+    name: 'RecuperacaoSenha',
+    component: () => import('../pages/RecuperacaoSenha.vue'),
+  },
+  {
+    path: '/dashboard',
+    name: 'Dashboard',
+    component: () => import('../pages/Dashboard.vue'),
+  },
+  {
     path: '/propriedades',
     name: 'Propriedades',
     component: () => import('../pages/Propriedades.vue'),
