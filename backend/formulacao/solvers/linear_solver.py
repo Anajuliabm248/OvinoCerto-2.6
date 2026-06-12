@@ -8,8 +8,6 @@ Variáveis x[i]: fração de cada ingrediente na MS total.
 Nutrientes como média ponderada:
   nutriente_total = Σ( x[i] * nutriente[i] )   → resultado em %
 
-Isso é matematicamente correto: se x é fração e nutriente[i] está em %,
-o resultado é a % ponderada na dieta (ex: pb_dieta = Σ xᵢ·PBᵢ).
 """
 import time
 import numpy as np
@@ -163,15 +161,14 @@ class LinearSolver:
 
     def _build_eq(self, n, ingredientes, restricoes):
         """
-        Restrições de igualdade.
-        Sempre inclui Σxᵢ = 1 como primeira linha.
-        Adiciona restrições nutricionais com operador '=' se existirem.
+        Restrições de igualdade
+        garante que as proporções somem 1 -> 100%
         """
         rows = [np.ones(n, dtype=float)]
         rhs  = [1.0]
 
         for r in restricoes:
-            if r['operador'] != '=':
+            if r['operador'] != '=': # caso operador seja de igualdade (ainda não utilizado)
                 continue
             linha = np.array([
                 getattr(ing, r['nutriente'].lower(), 0.0)
@@ -184,7 +181,12 @@ class LinearSolver:
 
     def _build_bounds(self, ingredientes):
         """
-        Bound padrão: [0, 1]. Ingredientes especiais recebem limite máximo menor.
+        aplica limites de inclusão de alguns ingredientes:
+        'ureia':                0.01,
+        'bicarbonato de sódio': 0.01,
+        'bicarbonato de sodio': 0.01,
+        'cloreto de amônio':    0.005,
+        'cloreto de amonio':    0.005,
         """
         bounds = []
         for ing in ingredientes:

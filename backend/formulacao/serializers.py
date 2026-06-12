@@ -133,11 +133,13 @@ class FormulacaoDetailSerializer(serializers.ModelSerializer):
         if not obj.exigencia:
             return {}
 
+        # calcula o atendimento nutricional comparando 
+        # o que a dieta fornece vs o que o nrc exige
         cms_kg = obj.exigencia.cms_kg
         if not cms_kg or cms_kg <= 0:
             return {}
 
-        # Somar kg/dia de cada nutriente a partir dos registros salvos
+        # Soma kg/dia de cada nutriente a partir dos registros salvos
         totais = {n: 0.0 for n in ('PB', 'NDT', 'FDN', 'EE', 'Ca', 'P')}
         for inf in obj.ingredientes_formulacao.all():
             totais['PB']  += inf.pb_kg
