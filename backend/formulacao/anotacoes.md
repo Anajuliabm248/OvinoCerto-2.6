@@ -46,14 +46,37 @@ Codificam as proporções da dieta como “indivíduos” em uma população e e
 # Calculos
 
 cms -> consumo de matéria seca (quandtidade max de alimento seco que o animal consegue digerir)
-    - é definido pela tabela nrc de eexigências
+    - é definido pela tabela nrc de exigências
 
+
+# Serializers -> FormulacaoDetailSerializer
+
+a porcentagem do nutriente é calculada pela soma dos kgs de cada nutriente, e dividido entre o consumo de matéria seca por kg (cms_kg)
+depois converte o kg/dia / cms_kg x 100 em % da matéria seca (MS)
+verifica o valor obtido pelo exigido e operador (<=, >=, ==), com tolerância de 0.05
+e retorna cada nutriente/kg 
+
+# Linear solver 
+
+### _build_objective -> 
+monta o que o linprog vai minimizar e maximizar
+````
+if objetivo == 'CUSTO': c[i] = ing.custo_kg
+elif objetivo == 'PB':  c[i] = -ing.pb     # maximizar = minimizar negativo
+elif objetivo == 'FDN': c[i] = ing.fdn
+````
+
+### _build_ineq ->
+converte o operador >= para <= multiplicando por -1 os dois lados da inequação
+ja que o liprog só aceita restrições de desigualdade no formato <=
+
+### _build_eq ->
+garante que as frações somem 1, resultando em 100% da dieta
+
+### _calc_nutrientes
 o sistema calcula cada nutriente da mistura por média ponderada (simplex). EX:
-    - Se 70% da mistura é milho (que tem 11% de proteína) e 30% é farelo de soja (que tem 45% de proteína), a proteína total da mistura é:
-    > 0,70 × 11% + 0,30 × 45% = 7,7% + 13,5% = 21,2%
-    - O sistema faz esse cálculo para todos os nutrientes ao mesmo tempo, com todos os ingredientes, e vai ajustando as proporções até encontrar uma combinação que:
-        - Atenda todas as regras nutricionais
-        - Minimize (ou maximize) o objetivo escolhido
-
-após encontrar as proporções, calculamos as quantidades reais de cada ingrediente
-
+- Se 70% da mistura é milho (que tem 11% de proteína) e 30% é farelo de soja (que tem 45% de proteína), a proteína total da mistura é:
+> 0,70 × 11% + 0,30 × 45% = 7,7% + 13,5% = 21,2%
+- O sistema faz esse cálculo para todos os nutrientes ao mesmo tempo, com todos os ingredientes, e vai ajustando as proporções até encontrar uma combinação que:
+    - Atenda todas as regras nutricionais
+    - Minimize (ou maximize) o objetivo escolhido
