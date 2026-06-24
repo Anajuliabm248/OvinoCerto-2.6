@@ -32,7 +32,16 @@ const routes = [
     path: '/propriedades',
     name: 'Propriedades',
     component: () => import('../pages/Propriedades.vue'),
-    meta: { requiresAuth: true },
+  },
+  {
+    path: '/ingredientes',
+    name: 'Ingredientes',
+    component: () => import('../pages/BancoIngredientes.vue'),
+  },
+  {
+    path: '/exigencias',
+    name: 'Exigencias',
+    component: () => import('../pages/Exigencias.vue'),
   },
   {
     path: '/propriedades/:id/lotes',
