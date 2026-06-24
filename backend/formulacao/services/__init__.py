@@ -1,0 +1,1 @@
+'''Regras de negócio, conectam o domínio com o externo'''

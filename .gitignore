@@ -11,6 +11,7 @@ db.sqlite3
 static/
 media/
 diagramas/
+anotacoes.md
 
 # Django stuff
 *.log

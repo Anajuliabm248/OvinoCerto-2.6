@@ -1,4 +1,4 @@
-from rest_framework import viewsets, status
+from rest_framework import serializers, viewsets, status
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.db.models import Q
@@ -12,9 +12,8 @@ class PropriedadeViewSet(viewsets.ModelViewSet):
     serializer_class = PropriedadeSerializer
     permission_classes = [IsAuthenticated]
 
-    # ------------------------------------------------------------------
+
     # Queryset restrito ao usuário autenticado
-    # ------------------------------------------------------------------
     def get_queryset(self):
         user = self.request.user
         if user.is_staff or user.is_superuser:
@@ -38,9 +37,7 @@ class PropriedadeViewSet(viewsets.ModelViewSet):
             )
         return queryset
 
-    # ------------------------------------------------------------------
     # Associa automaticamente ao perfil do usuário logado
-    # ------------------------------------------------------------------
     def perform_create(self, serializer):
         try:
             perfil = self.request.user.perfil_usuario

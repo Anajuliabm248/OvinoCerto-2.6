@@ -15,9 +15,7 @@ class LoteViewSet(viewsets.ModelViewSet):
     serializer_class = LoteSerializer
     permission_classes = [IsAuthenticated]
 
-    # ------------------------------------------------------------------
     # Queryset restrito ao usuário autenticado (via propriedade)
-    # ------------------------------------------------------------------
     def get_queryset(self):
         user = self.request.user
         if user.is_staff or user.is_superuser:
@@ -48,9 +46,7 @@ class LoteViewSet(viewsets.ModelViewSet):
 
         return queryset
 
-    # ------------------------------------------------------------------
     # Garante que a propriedade pertence ao usuário logado
-    # ------------------------------------------------------------------
     def perform_create(self, serializer):
         propriedade_id = self.request.data.get('propriedade')
         try:
@@ -67,10 +63,8 @@ class LoteViewSet(viewsets.ModelViewSet):
             )
         serializer.save()
 
-    # ------------------------------------------------------------------
     # Ação: busca a exigência NRC correspondente a este lote
     # GET /api/lotes/{id}/exigencia/
-    # ------------------------------------------------------------------
     @action(detail=True, methods=['get'])
     def exigencia(self, request, pk=None):
         """Retorna a exigência NRC mais próxima para os parâmetros do lote."""

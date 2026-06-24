@@ -60,9 +60,8 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'projeto.wsgi.application'
 
-# ---------------------------------------------------------------------------
+
 # Banco de dados
-# ---------------------------------------------------------------------------
 _use_sqlite = os.environ.get('USE_SQLITE', 'true').lower() == 'true'
 
 if _use_sqlite:
@@ -85,9 +84,7 @@ else:
         }
     }
 
-# ---------------------------------------------------------------------------
 # Validação de senha
-# ---------------------------------------------------------------------------
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
     {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},
@@ -95,17 +92,15 @@ AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
 
-# ---------------------------------------------------------------------------
+
 # Internacionalização
-# ---------------------------------------------------------------------------
 LANGUAGE_CODE = 'pt-br'
 TIME_ZONE = 'America/Sao_Paulo'
 USE_I18N = True
 USE_TZ = True
 
-# ---------------------------------------------------------------------------
+
 # Arquivos estáticos / media
-# ---------------------------------------------------------------------------
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 MEDIA_URL = '/media/'
@@ -113,9 +108,8 @@ MEDIA_ROOT = BASE_DIR / 'media'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# ---------------------------------------------------------------------------
+
 # CORS
-# ---------------------------------------------------------------------------
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:3000',
     'http://localhost:5173',
@@ -123,9 +117,8 @@ CORS_ALLOWED_ORIGINS = [
 ]
 CORS_ALLOW_CREDENTIALS = True
 
-# ---------------------------------------------------------------------------
+
 # Django REST Framework
-# ---------------------------------------------------------------------------
 REST_FRAMEWORK = {
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 100,
@@ -139,9 +132,7 @@ REST_FRAMEWORK = {
     ],
 }
 
-# ---------------------------------------------------------------------------
 # JWT (Simple JWT)
-# ---------------------------------------------------------------------------
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME':  timedelta(hours=8),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),

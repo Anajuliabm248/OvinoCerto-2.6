@@ -37,9 +37,9 @@ class ExigenciaNRCViewSet(viewsets.ModelViewSet):
             qs = qs.filter(fase=fase)
         return qs
 
-    # ------------------------------------------------------------------
+    
     # GET /api/exigencias/categorias/
-    # ------------------------------------------------------------------
+    
     @action(detail=False, methods=['get'])
     def categorias(self, request):
         """Retorna lista de categorias distintas presentes na tabela NRC."""
@@ -56,9 +56,9 @@ class ExigenciaNRCViewSet(viewsets.ModelViewSet):
             for c in cats
         ])
 
-    # ------------------------------------------------------------------
+    
     # GET /api/exigencias/lookup/?categoria=&fase=&pv_kg=&gmd=&tipo_parto=
-    # ------------------------------------------------------------------
+    
     @action(detail=False, methods=['get'])
     def lookup(self, request):
         """

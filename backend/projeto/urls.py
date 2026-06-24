@@ -10,7 +10,6 @@ from propriedade.viewsets import PropriedadeViewSet
 from lote.viewsets import LoteViewSet
 from exigencia_nrc.viewsets import ExigenciaNRCViewSet
 from ingrediente.viewsets import IngredienteViewSet
-from formulacao.viewsets import FormulacaoViewSet
 
 router = DefaultRouter()
 router.register(r'usuarios',    UsuarioViewSet,      basename='usuario')
@@ -18,7 +17,6 @@ router.register(r'propriedades', PropriedadeViewSet, basename='propriedade')
 router.register(r'lotes',        LoteViewSet,        basename='lote')
 router.register(r'exigencias',   ExigenciaNRCViewSet, basename='exigencia')
 router.register(r'ingredientes', IngredienteViewSet,  basename='ingrediente')
-router.register(r'formulacoes',  FormulacaoViewSet,  basename='formulacao')
 
 urlpatterns = [
     # Admin Django

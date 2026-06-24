@@ -29,9 +29,7 @@ class IngredienteViewSet(viewsets.ModelViewSet):
     serializer_class = IngredienteSerializer
     permission_classes = [IsAuthenticated]
 
-    # ------------------------------------------------------------------
     # Queryset: Valadares (públicos) + ingredientes do usuário logado
-    # ------------------------------------------------------------------
     def get_queryset(self):
         user = self.request.user
 
@@ -69,9 +67,8 @@ class IngredienteViewSet(viewsets.ModelViewSet):
 
         return qs.select_related('usuario')
 
-    # ------------------------------------------------------------------
+
     # Cria ingrediente custom associado ao usuário logado
-    # ------------------------------------------------------------------
     def perform_create(self, serializer):
         try:
             perfil = self.request.user.perfil_usuario
@@ -80,9 +77,8 @@ class IngredienteViewSet(viewsets.ModelViewSet):
             raise PermissionDenied('Complete seu perfil antes de adicionar ingredientes.')
         serializer.save(usuario=perfil, fonte_valadares=False)
 
-    # ------------------------------------------------------------------
+
     # Protege edição/exclusão: apenas ingredientes custom do próprio usuário
-    # ------------------------------------------------------------------
     def _verificar_propriedade(self, instance):
         from rest_framework.exceptions import PermissionDenied
         if instance.fonte_valadares:
@@ -102,9 +98,7 @@ class IngredienteViewSet(viewsets.ModelViewSet):
         self._verificar_propriedade(instance)
         instance.delete()
 
-    # ------------------------------------------------------------------
     # GET /api/ingredientes/meus/
-    # ------------------------------------------------------------------
     @action(detail=False, methods=['get'])
     def meus(self, request):
         """Retorna somente os ingredientes customizados do usuário logado."""
@@ -116,9 +110,8 @@ class IngredienteViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(qs, many=True)
         return Response(serializer.data)
 
-    # ------------------------------------------------------------------
+
     # GET /api/ingredientes/tipos/
-    # ------------------------------------------------------------------
     @action(detail=False, methods=['get'])
     def tipos(self, request):
         """Retorna as opções de classificação e tipo disponíveis."""
@@ -128,15 +121,13 @@ class IngredienteViewSet(viewsets.ModelViewSet):
             'tipos':          [{'value': v, 'label': l} for v, l in TIPO_CHOICES],
         })
 
-    # ------------------------------------------------------------------
     # GET /api/ingredientes/{id}/substitutos/?objetivo=custo|pb|fdn|ndt
-    # ------------------------------------------------------------------
     @action(detail=True, methods=['get'])
     def substitutos(self, request, pk=None):
         """
         Sugere substitutos para o ingrediente, rankeados por objetivo:
           - custo  → menor custo_kg
-          - pb     → PB mais próximo (sem aumentar custo desnecessariamente)
+          - pb     → PB mais próximo
           - fdn    → FDN mais próximo
           - ndt    → NDT mais próximo
         """

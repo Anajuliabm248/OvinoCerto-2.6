@@ -60,9 +60,6 @@ NORM_CATEGORIA_MAP = { _normalize(k): v for k, v in CATEGORIA_MAP.items() }
 NORM_FASE_MAP = { _normalize(k): v for k, v in FASE_MAP.items() }
 
 # Colunas do Excel (índices base-0):
-# 0=N°, 1=Categoria, 2=Fase, 3=PV, 4=Tipo_Parto, 5=PV_Nascer, 6=GMD,
-# 7=%PV, 8=CMS, 9=PB_g, 10=%PB, 11=NDT_kg, 12=%NDT, 13=FDN_kg, 14=FDN%,
-# 15=EE_kg, 16=EE%, 17=Ca_g, 18=%Ca, 19=P_g, 20=%P, 21=Ca/P
 COL_IDX = {
     'numero':      0,
     'categoria':   1,
