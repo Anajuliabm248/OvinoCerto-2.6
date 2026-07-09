@@ -28,17 +28,25 @@ ORDEM_CLASSIFICACAO = Case(
 )
 
 
-def listar_ingredientes_disponiveis(usuario_id: int):
+def listar_ingredientes_disponiveis(usuario_id: int | None):
     """
     Retorna queryset de Ingrediente visível para o usuário:
     - todos os ingredientes do sistema (fonte_valadares=True)
     - ingredientes customizados do próprio usuário (usuario_id=usuario_id)
 
     Ordenado: volumoso → concentrado, depois tipo, depois nome.
+
+    Se usuario_id for None (usuário sem perfil), retorna apenas os do
+    sistema — sem tentar filtrar por usuario_id=None, o que produziria
+    Q(usuario_id__isnull=True) e poderia trazer ingredientes órfãos.
     """
+    filtro = Q(fonte_valadares=True)
+    if usuario_id is not None:
+        filtro |= Q(usuario_id=usuario_id)
+
     return (
         Ingrediente.objects
-        .filter(Q(fonte_valadares=True) | Q(usuario_id=usuario_id))
+        .filter(filtro)
         .annotate(_ordem_classe=ORDEM_CLASSIFICACAO)
         .order_by("_ordem_classe", "tipo", "nome")
     )

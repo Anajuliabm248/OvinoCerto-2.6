@@ -22,7 +22,7 @@ router.register(r'propriedades', PropriedadeViewSet, basename='propriedade')
 router.register(r'lotes',        LoteViewSet,        basename='lote')
 router.register(r'exigencias',   ExigenciaNRCViewSet, basename='exigencia')
 router.register(r'ingredientes', IngredienteViewSet,  basename='ingrediente')
-router.register(r'formulacao', FormulacaoViewSet, basename='formulacao')
+router.register(r'formulacoes', FormulacaoViewSet, basename='formulacao')
 
 urlpatterns = [
     # Admin Django
