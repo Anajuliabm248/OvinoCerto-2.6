@@ -1,5 +1,5 @@
 """
-Exigencia configurada
+Repository - ExigenciaConfigurada / ConfiguracaoNutriente.
 
 Traduz entre os models Django (ExigenciaConfigurada,
 ConfiguracaoNutriente, HistoricoConfiguracaoNutriente) e os
@@ -13,8 +13,6 @@ Responsabilidades:
 """
 
 from __future__ import annotations
-
-import datetime
 
 from django.db import transaction
 
@@ -31,7 +29,9 @@ from formulacao.models import (
 
 class ExigenciaRepository:
 
-    
+    # ------------------------------------------------------------------
+    # Leitura: DB → Domínio
+    # ------------------------------------------------------------------
 
     @staticmethod
     def get_requisitos(formulacao_id: int) -> dict[Nutriente, RequisitoNutriente]:
@@ -94,9 +94,56 @@ class ExigenciaRepository:
         except ExigenciaConfigurada.DoesNotExist:
             return None
 
-    
+    @staticmethod
+    def serializar_configuracao(formulacao_id: int) -> dict | None:
+        """
+        Retorna a exigência configurada vigente em formato simples para
+        ser gravada dentro do snapshot.
+        """
+        try:
+            exigencia = (
+                ExigenciaConfigurada.objects
+                .select_related("exigencia_nrc_origem")
+                .get(formulacao_id=formulacao_id)
+            )
+        except ExigenciaConfigurada.DoesNotExist:
+            return None
+
+        configs = (
+            ConfiguracaoNutriente.objects
+            .filter(exigencia_configurada=exigencia)
+            .order_by("nutriente")
+            .values(
+                "nutriente",
+                "operador",
+                "valor_min",
+                "valor_max",
+                "valor_origem_nrc",
+                "alterado_pelo_usuario",
+                "dt_alteracao",
+            )
+        )
+
+        return {
+            "id": exigencia.id,
+            "cms_kg": exigencia.cms_kg,
+            "exigencia_nrc_origem_id": exigencia.exigencia_nrc_origem_id,
+            "configuracoes": [
+                {
+                    **config,
+                    "dt_alteracao": (
+                        config["dt_alteracao"].isoformat()
+                        if config["dt_alteracao"]
+                        else None
+                    ),
+                }
+                for config in configs
+            ],
+        }
+
+    # ------------------------------------------------------------------
     # Escrita: criação a partir de ExigenciaNRC
-    
+    # ------------------------------------------------------------------
 
     @staticmethod
     @transaction.atomic
@@ -111,6 +158,11 @@ class ExigenciaRepository:
 
         Todos os nutrientes nascem com alterado_pelo_usuario=False.
 
+        Mapeamento NRC → operadores padrão:
+        - PB, NDT, EE, Ca, P : ">=" (mínimo)
+        - FDN                : "<=" (máximo)
+        - CA_P               : "=" com tolerância no domínio
+
         Valores NRC estão em percentual (0-100 da MS) — nenhuma
         conversão necessária (ConfiguracaoNutriente também armazena
         em % da MS).
@@ -123,12 +175,13 @@ class ExigenciaRepository:
 
         # (nutriente_db, operador, valor_min, valor_max, valor_origem_nrc)
         configs = [
-            ("PB",  Operador.MAIOR_IGUAL, exigencia_nrc.pb,  None,              exigencia_nrc.pb),
-            ("NDT", Operador.MAIOR_IGUAL, exigencia_nrc.ndt, None,              exigencia_nrc.ndt),
-            ("FDN", Operador.MENOR_IGUAL, None,              exigencia_nrc.fdn, exigencia_nrc.fdn),
-            ("EE",  Operador.MAIOR_IGUAL, exigencia_nrc.ee,  None,              exigencia_nrc.ee),
-            ("CA",  Operador.MAIOR_IGUAL, exigencia_nrc.ca,  None,              exigencia_nrc.ca),
-            ("P",   Operador.MAIOR_IGUAL, exigencia_nrc.p,   None,              exigencia_nrc.p),
+            ("PB",  Operador.MAIOR_IGUAL, exigencia_nrc.pb_percentual,  None,                          exigencia_nrc.pb_percentual),
+            ("NDT", Operador.MAIOR_IGUAL, exigencia_nrc.ndt_percentual, None,                          exigencia_nrc.ndt_percentual),
+            ("FDN", Operador.MENOR_IGUAL, None,                         exigencia_nrc.fdn_percentual, exigencia_nrc.fdn_percentual),
+            ("EE",  Operador.MAIOR_IGUAL, exigencia_nrc.ee_percentual,  None,                          exigencia_nrc.ee_percentual),
+            ("CA",  Operador.MAIOR_IGUAL, exigencia_nrc.ca_percentual,  None,                          exigencia_nrc.ca_percentual),
+            ("P",   Operador.MAIOR_IGUAL, exigencia_nrc.p_percentual,   None,                          exigencia_nrc.p_percentual),
+            ("CA_P", Operador.IGUAL,       exigencia_nrc.ca_p_percentual, exigencia_nrc.ca_p_percentual, exigencia_nrc.ca_p_percentual),
         ]
 
         ConfiguracaoNutriente.objects.bulk_create([
@@ -142,13 +195,14 @@ class ExigenciaRepository:
                 alterado_pelo_usuario=False,
             )
             for nutriente, operador, valor_min, valor_max, valor_origem_nrc in configs
+            if valor_origem_nrc is not None
         ])
 
         return exigencia
 
-    
+    # ------------------------------------------------------------------
     # Escrita: atualização de nutriente individual
-    
+    # ------------------------------------------------------------------
 
     @staticmethod
     @transaction.atomic

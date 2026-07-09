@@ -1,11 +1,16 @@
+"""serializers do app de propriedade"""
+
 from rest_framework import serializers
 from .models import Propriedade
 
+# pylint: disable= too-few-public-methods
 
 class PropriedadeSerializer(serializers.ModelSerializer):
+    '''configuração do serializer de propriedade'''
     usuario_nome = serializers.CharField(source='usuario.nome', read_only=True)
 
     class Meta:
+        '''classe meta para definir os campos do serializer e os campos somente leitura'''
         model = Propriedade
         fields = [
             'id',

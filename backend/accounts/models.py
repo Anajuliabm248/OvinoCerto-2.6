@@ -1,13 +1,18 @@
+""" configurações do model de usuario """
+
 from django.conf import settings
 from django.db import models
 
+# pylint: disable=too-few-public-methods, invalid-str-returned
 
 class Perfil(models.TextChoices):
+    '''Enumeração para os perfis de usuário do sistema.'''
     ADMIN = 'ADMIN', 'Administrador do Sistema'
     USER = 'USER', 'Usuario do Sistema'
 
 
 class Usuario(models.Model):
+    '''Model para representar um usuário do sistema.'''
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -30,6 +35,7 @@ class Usuario(models.Model):
     )
 
     class Meta:
+        '''classe meta, define o nome do model e a ordenação padrão'''
         verbose_name = 'Usuario'
         verbose_name_plural = 'Usuarios'
         ordering = ['nome']
@@ -39,12 +45,15 @@ class Usuario(models.Model):
 
     @property
     def is_admin(self):
+        '''Verifica se o usuário possui perfil de administrador.'''
         return self.perfil == Perfil.ADMIN
 
     @property
     def is_user(self):
+        '''Verifica se o usuário possui perfil de usuário.'''
         return self.perfil == Perfil.USER
 
     @property
     def pode_gerenciar_usuarios(self):
+        '''Verifica se o usuário possui permissão para gerenciar outros usuários.'''
         return self.perfil == Perfil.ADMIN

@@ -1,3 +1,5 @@
+"""Configurações do projeto Django"""
+
 import os
 from pathlib import Path
 from datetime import timedelta
@@ -28,6 +30,8 @@ INSTALLED_APPS = [
     'exigencia_nrc.apps.ExigenciaNrcConfig',
     'ingrediente.apps.IngredienteConfig',
     'formulacao.apps.FormulacaoConfig',
+    # drf-spectacular
+    'drf_spectacular',
 ]
 
 MIDDLEWARE = [
@@ -130,6 +134,15 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
+    # drf-spectacular
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+}
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'API OvinoCerto',
+    'DESCRIPTION': 'projeto de formulação automatizado de ração para ovinos da UFSM',
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
 }
 
 # JWT (Simple JWT)

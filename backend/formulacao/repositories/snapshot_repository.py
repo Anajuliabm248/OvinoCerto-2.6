@@ -17,9 +17,6 @@ from formulacao.models import EventoFormulacao, SnapshotFormulacao, TipoEvento
 
 
 class SnapshotRepository:
-
-    
-    # Escrita
     
 
     @staticmethod

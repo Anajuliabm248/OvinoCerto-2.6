@@ -1,3 +1,4 @@
+""" viewsets do app de accounts"""
 from rest_framework import viewsets, status, generics
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -7,6 +8,8 @@ from django.db.models import Q
 
 from .models import Usuario
 from .serializers import UsuarioSerializer, RegisterSerializer, LoginSerializer
+
+# pylint: disable=abstract-method, no-member, too-many-ancestors, unused-argument
 
 
 class RegisterView(generics.CreateAPIView):
@@ -35,6 +38,7 @@ class LoginView(generics.GenericAPIView):
     permission_classes = [AllowAny]
 
     def post(self, request, *args, **kwargs):
+        '''Valida credenciais e devolve tokens JWT.'''
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -55,10 +59,12 @@ class LoginView(generics.GenericAPIView):
         )
 
 class UsuarioViewSet(viewsets.ModelViewSet):
+    '''ViewSet para o model Usuario.'''
     serializer_class = UsuarioSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
+        '''Retorna o queryset de usuários com base no perfil do usuário autenticado.'''
         user = self.request.user
         if user.is_staff or user.is_superuser:
             return Usuario.objects.select_related('user').all()
@@ -68,6 +74,7 @@ class UsuarioViewSet(viewsets.ModelViewSet):
             return Usuario.objects.none()
 
     def filter_queryset(self, queryset):
+        '''filtro de busca para o queryset de usuários com base no parâmetro de pesquisa.'''
         search = self.request.query_params.get('search', '')
         if search:
             queryset = queryset.filter(

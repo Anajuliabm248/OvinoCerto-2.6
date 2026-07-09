@@ -1,13 +1,20 @@
-from rest_framework import viewsets, status
+"""viewsets do app de ingredientes"""
+
+import numpy as np
+
+from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.exceptions import PermissionDenied
 from django.db.models import Q
 
 from accounts.models import Usuario
-from .models import Ingrediente
+from .models import Ingrediente, CLASSIFICACAO_CHOICES, TIPO_CHOICES
 from .serializers import IngredienteSerializer
 
+
+# pylint: disable= no-member, too-many-ancestors, unused-argument
 
 class IngredienteViewSet(viewsets.ModelViewSet):
     """
@@ -21,7 +28,7 @@ class IngredienteViewSet(viewsets.ModelViewSet):
     - GET  /api/ingredientes/?search=        → busca por nome
     - GET  /api/ingredientes/meus/           → atalho: só custom do usuário
     - GET  /api/ingredientes/{id}/substitutos/?objetivo=custo|pb|fdn
-                                             → sugestões de substituição
+                                            → sugestões de substituição
     - POST /api/ingredientes/               → cria ingrediente custom
     - PUT/PATCH /api/ingredientes/{id}/     → edita (só os próprios, não-Valadares)
     - DELETE /api/ingredientes/{id}/        → exclui (só os próprios, não-Valadares)
@@ -72,21 +79,19 @@ class IngredienteViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         try:
             perfil = self.request.user.perfil_usuario
-        except Usuario.DoesNotExist:
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied('Complete seu perfil antes de adicionar ingredientes.')
+        except Usuario.DoesNotExist as exc:
+            raise PermissionDenied('Complete seu perfil antes de adicionar ingredientes.') from exc
         serializer.save(usuario=perfil, fonte_valadares=False)
-
 
     # Protege edição/exclusão: apenas ingredientes custom do próprio usuário
     def _verificar_propriedade(self, instance):
-        from rest_framework.exceptions import PermissionDenied
+        '''Verifica se o usuário tem permissão para editar/excluir o ingrediente'''
         if instance.fonte_valadares:
             raise PermissionDenied('Ingredientes Valadares não podem ser alterados.')
         try:
             perfil = self.request.user.perfil_usuario
-        except Usuario.DoesNotExist:
-            raise PermissionDenied('Acesso negado.')
+        except Usuario.DoesNotExist as exc:
+            raise PermissionDenied('Acesso negado.') from exc
         if instance.usuario != perfil and not self.request.user.is_staff:
             raise PermissionDenied('Você só pode editar seus próprios ingredientes.')
 
@@ -115,7 +120,6 @@ class IngredienteViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def tipos(self, request):
         """Retorna as opções de classificação e tipo disponíveis."""
-        from .models import CLASSIFICACAO_CHOICES, TIPO_CHOICES
         return Response({
             'classificacoes': [{'value': v, 'label': l} for v, l in CLASSIFICACAO_CHOICES],
             'tipos':          [{'value': v, 'label': l} for v, l in TIPO_CHOICES],
@@ -151,8 +155,6 @@ class IngredienteViewSet(viewsets.ModelViewSet):
 
         if not candidatos.exists():
             return Response([])
-
-        import numpy as np
 
         vec_ref = ingrediente.to_vetor_nutricional()  # [pb, ndt, fdn, ee, ca, p]
 

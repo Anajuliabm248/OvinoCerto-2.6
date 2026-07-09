@@ -52,9 +52,9 @@ class AjustarParticipacaoService:
 
         nova_fracao : valor em 0-1 (o serializer converte de % para fração).
         """
-        
+        # ------------------------------------------------------------------
         # Validação
-        
+        # ------------------------------------------------------------------
         if not (0.0 <= nova_fracao <= 1.0):
             raise ValueError(
                 f"nova_fracao deve estar entre 0 e 1 (recebido {nova_fracao}). "
@@ -67,24 +67,24 @@ class AjustarParticipacaoService:
 
         fracao_anterior = ing_form.ms_porcent / 100.0
 
-        
+        # ------------------------------------------------------------------
         # Nenhuma mudança real → encerra sem criar snapshot desnecessário
-        
+        # ------------------------------------------------------------------
         if abs(nova_fracao - fracao_anterior) < 1e-9:
             return
 
-        
+        # ------------------------------------------------------------------
         # Persistir nova participação e travar
-        
+        # ------------------------------------------------------------------
         IngredienteFormulacaoRepository.atualizar_participacao(
             ing_form_id=ing_form_id,
             fracao=nova_fracao,
             origem=OrigemParticipacao.MANUAL_TRAVADA,
         )
 
-        
+        # ------------------------------------------------------------------
         # Registrar evento antes do recálculo
-        
+        # ------------------------------------------------------------------
         nome_ing = ing_form.ingrediente.nome if ing_form.ingrediente else "(removido)"
         EventoRepository.registrar(
             formulacao_id=formulacao_id,
@@ -100,9 +100,9 @@ class AjustarParticipacaoService:
             usuario_id=usuario_id,
         )
 
-        
+        # ------------------------------------------------------------------
         # Recalcular nutrientes + snapshot
-        
+        # ------------------------------------------------------------------
         nome_ing_curto = nome_ing[:40]
         RecalcularFormulacaoService.executar(
             formulacao_id=formulacao_id,
@@ -156,9 +156,9 @@ class AjustarParticipacaoService:
             motivo=f"destravamento: {nome_ing[:40]}",
         )
 
-    
+    # ------------------------------------------------------------------
     # Helper
-    
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _get_e_validar(
@@ -180,3 +180,4 @@ class AjustarParticipacaoService:
                 f"IngredienteFormulacao {ing_form_id} não encontrado "
                 f"na formulação {formulacao_id}."
             )
+            

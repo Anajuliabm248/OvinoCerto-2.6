@@ -1,17 +1,22 @@
-from django.contrib.auth import get_user_model
+""" serializadores para o app accounts """
+
+from django.contrib.auth import get_user_model, authenticate
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
-from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import Usuario
 
 DjangoUser = get_user_model()
 
+# pylint: disable= abstract-method, no-member, too-few-public-methods
+
 
 class UsuarioSerializer(serializers.ModelSerializer):
+    '''Serializador para o model Usuario.'''
     username = serializers.CharField(source='user.username', read_only=True)
 
     class Meta:
+        '''classe Meta, define o model e os campos a serem serializados'''
         model = Usuario
         fields = [
             'id',
@@ -32,6 +37,7 @@ class UsuarioSerializer(serializers.ModelSerializer):
 
 
 class RegisterSerializer(serializers.Serializer):
+    '''Serializador para o registro de novos usuários.'''
     # Credenciais Django (usar apenas o email como username)
     password = serializers.CharField(write_only=True, validators=[validate_password])
     password2 = serializers.CharField(write_only=True, label='Confirmar senha')
@@ -47,25 +53,28 @@ class RegisterSerializer(serializers.Serializer):
     produtor_ovinos = serializers.BooleanField(default=False)
 
     def validate_email(self, value):
-        # Email must be unique both as Usuario.email and as Django username/email
+        '''valida o email para garantir que já não está em uso'''
         if Usuario.objects.filter(email=value).exists():
             raise serializers.ValidationError('Este e-mail já está cadastrado.')
-        if DjangoUser.objects.filter(username=value).exists() or DjangoUser.objects.filter(email=value).exists():
+        if DjangoUser.objects.filter(username=value).exists() or \
+                DjangoUser.objects.filter(email=value).exists():
             raise serializers.ValidationError('Este e-mail já está em uso como usuário.')
         return value
 
     def validate_cpf(self, value):
+        '''valida o cpf para garantir que já não está em uso'''
         if Usuario.objects.filter(cpf=value).exists():
             raise serializers.ValidationError('Este CPF já está cadastrado.')
         return value
 
     def validate(self, attrs):
+        '''valida se as senhas batem'''
         if attrs['password'] != attrs.pop('password2'):
             raise serializers.ValidationError({'password': 'As senhas não coincidem.'})
         return attrs
 
     def create(self, validated_data):
-        # Use email as the Django username
+        '''cria o usuário'''
         email = validated_data.pop('email')
         password = validated_data.pop('password')
 
@@ -80,11 +89,11 @@ class RegisterSerializer(serializers.Serializer):
 
 
 class LoginSerializer(serializers.Serializer):
+    '''serializer de login'''
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
 
     def validate(self, attrs):
-        from django.contrib.auth import authenticate
         user = authenticate(
             username=attrs['email'],
             password=attrs['password'],

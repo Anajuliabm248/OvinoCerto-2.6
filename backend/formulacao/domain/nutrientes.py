@@ -23,9 +23,11 @@ class Nutriente(str, Enum):
     EE = "EE"     # Extrato Etéreo
     CA = "CA"     # Cálcio
     P = "P"       # Fósforo
+    CA_P = "CA_P" # Relação cálcio:fósforo
 
 
-# Ordem canônica: define o índice de cada nutriente em qualquer array NumPy do domínio
+# Ordem canônica: define o índice de cada nutriente em qualquer array NumPy do domínio.
+# CA_P é derivado no total da formulação; em vetores de ingrediente pode vir como 0.
 NUTRIENTES_ORDEM: tuple[Nutriente, ...] = (
     Nutriente.PB,
     Nutriente.NDT,
@@ -33,6 +35,7 @@ NUTRIENTES_ORDEM: tuple[Nutriente, ...] = (
     Nutriente.EE,
     Nutriente.CA,
     Nutriente.P,
+    Nutriente.CA_P,
 )
 
 N_NUTRIENTES = len(NUTRIENTES_ORDEM)

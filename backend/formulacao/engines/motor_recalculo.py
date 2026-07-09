@@ -29,7 +29,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from formulacao.domain.nutrientes import N_NUTRIENTES, NUTRIENTES_ORDEM, Nutriente
+from formulacao.domain.nutrientes import N_NUTRIENTES, NUTRIENTES_ORDEM, Nutriente, indice_de
 from formulacao.domain.participacao import ParticipacaoVetor
 from formulacao.domain.requisito import RequisitoNutriente
 from formulacao.domain.resultado import ResultadoAdequacao
@@ -133,6 +133,15 @@ class MotorRecalculo:
         
         total_kg = contribuicoes_kg.sum(axis=0)  # shape (N_NUTRIENTES,)
         total_pct = (total_kg / cms_kg) * 100.0  # shape (N_NUTRIENTES,)
+
+        idx_ca = indice_de(Nutriente.CA)
+        idx_p = indice_de(Nutriente.P)
+        idx_ca_p = indice_de(Nutriente.CA_P)
+        total_pct[idx_ca_p] = (
+            total_pct[idx_ca] / total_pct[idx_p]
+            if total_pct[idx_p] > 1e-12
+            else 0.0
+        )
 
         vetor_total = VetorNutricional(valores=total_pct)
 

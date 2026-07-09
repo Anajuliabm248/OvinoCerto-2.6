@@ -13,3 +13,4 @@ numpy
 pylint
 pytest
 pytest-django
+drf-spectacular

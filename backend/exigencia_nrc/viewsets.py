@@ -1,13 +1,16 @@
+"""ViewSet para a tabela NRC de exigências nutricionais"""
+
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.response import Response
-from django.db.models import Q
 
-from lote.models import FASES_COM_PARTO_E_DIAS
+from lote.models import FASES_COM_PARTO_E_DIAS, CATEGORIA_CHOICES
 from .models import ExigenciaNRC
 from .serializers import ExigenciaNRCSerializer
 
+
+# pylint: disable= no-member, unused-argument, too-many-branches, too-many-ancestors
 
 class ExigenciaNRCViewSet(viewsets.ModelViewSet):
     """
@@ -37,9 +40,6 @@ class ExigenciaNRCViewSet(viewsets.ModelViewSet):
             qs = qs.filter(fase=fase)
         return qs
 
-    
-    # GET /api/exigencias/categorias/
-    
     @action(detail=False, methods=['get'])
     def categorias(self, request):
         """Retorna lista de categorias distintas presentes na tabela NRC."""
@@ -49,16 +49,12 @@ class ExigenciaNRCViewSet(viewsets.ModelViewSet):
             .distinct()
             .order_by('categoria')
         )
-        from lote.models import CATEGORIA_CHOICES
         label_map = dict(CATEGORIA_CHOICES)
         return Response([
             {'value': c, 'label': label_map.get(c, c)}
             for c in cats
         ])
 
-    
-    # GET /api/exigencias/lookup/?categoria=&fase=&pv_kg=&gmd=&tipo_parto=
-    
     @action(detail=False, methods=['get'])
     def lookup(self, request):
         """
@@ -106,7 +102,7 @@ class ExigenciaNRCViewSet(viewsets.ModelViewSet):
                     qs = qs.filter(tipo_parto=int(tipo_parto))
                 except ValueError:
                     pass
-        
+
         if not qs.exists():
             return Response(
                 {'detail': 'Nenhuma exigência NRC encontrada para esta combinação.'},

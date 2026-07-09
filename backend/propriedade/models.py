@@ -1,27 +1,16 @@
+"""models do app propriedade"""
+
 from django.db import models
 
 from accounts.models import Usuario
 
-# Create your models here.
-'''
-int id
-int id_usuario
-str nome
-str cnpj (opcional)
-str proprietario (faz referência ao nome do usuário)
-str telefone (opcional)
-str uf
-str cidade
-str localidade
-date dt_cadastro
-date dt_atualizacao
-'''
-
+# pylint: disable= invalid-str-returned, too-few-public-methods
 
 class Propriedade(models.Model):
+    '''Modelo de Propriedade'''
     usuario = models.ForeignKey(
-        Usuario, 
-        on_delete=models.CASCADE, 
+        Usuario,
+        on_delete=models.CASCADE,
         related_name='propriedades',
     )
     nome = models.CharField(max_length=255)
@@ -33,11 +22,12 @@ class Propriedade(models.Model):
     localidade = models.CharField(max_length=255)
     dt_cadastro = models.DateTimeField(auto_now_add=True)
     dt_atualizacao = models.DateTimeField(auto_now=True)
-    
+
     class Meta:
+        '''classe meta, para definir o nome do modelo no admin e a ordenação padrão'''
+        verbose_name = "Propriedade"
         verbose_name_plural = "Propriedades"
         ordering = ['-dt_cadastro'] # data de cadastro mais recente primeiro
-        
+
     def __str__(self):
         return self.nome
-    

@@ -68,6 +68,7 @@ class RecalcularFormulacaoService:
         vetores        = IngredienteFormulacaoRepository.get_vetores_nutricionais(formulacao_id)
         requisitos     = ExigenciaRepository.get_requisitos(formulacao_id)
         cms_kg         = ExigenciaRepository.get_cms_kg(formulacao_id)
+        exigencia_payload = ExigenciaRepository.serializar_configuracao(formulacao_id)
 
         if not requisitos:
             raise ValueError(
@@ -118,6 +119,7 @@ class RecalcularFormulacaoService:
                 resultado=saida.resultado.to_dict(),
                 vetor_total=saida.vetor_total.to_dict(),
                 cms_kg=cms_kg,
+                exigencia_configurada=exigencia_payload,
                 alertas=alertas_dicts,
                 usuario_id=usuario_id,
                 motivo=motivo,
@@ -164,6 +166,7 @@ def _construir_payload(
     resultado: dict,
     vetor_total: dict,
     cms_kg: float,
+    exigencia_configurada: dict | None,
     alertas: list[dict],
     usuario_id: int | None,
     motivo: str,
@@ -181,6 +184,7 @@ def _construir_payload(
         "motivo":           motivo,
         "usuario_id":       usuario_id,
         "cms_kg":           cms_kg,
+        "exigencia_configurada": exigencia_configurada,
         "participacoes":    participacao_dicts,
         "vetor_total":      vetor_total,
         "resultado_adequacao": resultado,

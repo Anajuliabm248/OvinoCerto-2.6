@@ -1,4 +1,8 @@
+"""modelos do app de lote"""
+
 from django.db import models
+
+# pylint: disable=too-few-public-methods, no-member
 
 CATEGORIA_CHOICES = [
     ('cordeiros_4_meses', 'Cordeiros(as) 4 meses'),
@@ -7,7 +11,7 @@ CATEGORIA_CHOICES = [
     ('carneiro_8_meses', 'Carneiro 8 meses'),
     ('carneiros', 'Carneiros'),
     ('ovelhas', 'Ovelhas'),
-]   
+]
 
 FASE_CHOICES = [
     ('crescimento', 'Crescimento'),
@@ -48,8 +52,8 @@ FASES_COM_PARTO_E_DIAS = [
     'inicio_lactacao', 'meio_lactacao', 'lactacao_tardia',
 ]
 
-
 class Lote(models.Model):
+    '''Model para representar um lote de animais em uma propriedade.'''
     propriedade = models.ForeignKey(
         'propriedade.Propriedade',
         on_delete=models.CASCADE,
@@ -57,7 +61,8 @@ class Lote(models.Model):
     )
     nome_lote = models.CharField(max_length=200, verbose_name='Nome do lote')
     raca = models.CharField(max_length=100, blank=True, null=True, verbose_name='Raça')
-    sistema = models.CharField(max_length=100, blank=True, null=True, verbose_name='Sistema de criação')
+    sistema = models.CharField(max_length=100, blank=True, null=True,
+                               verbose_name='Sistema de criação')
     categoria = models.CharField(max_length=20, choices=CATEGORIA_CHOICES, verbose_name='Categoria')
     fase = models.CharField(max_length=20, choices=FASE_CHOICES, verbose_name='Fase produtiva')
     tipo_parto = models.PositiveSmallIntegerField(
@@ -83,6 +88,7 @@ class Lote(models.Model):
     dt_atualizacao = models.DateTimeField(auto_now=True)
 
     class Meta:
+        '''classe meta, define o nome do model e a ordenação padrão'''
         verbose_name = 'Lote'
         verbose_name_plural = 'Lotes'
         ordering = ['-dt_cadastro']

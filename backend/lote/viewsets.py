@@ -1,22 +1,39 @@
+"""viewsets do app de lote"""
+
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import NotFound
 from django.db.models import Q
-from django.shortcuts import get_object_or_404
 
+
+from exigencia_nrc.serializers import ExigenciaNRCSerializer
+from formulacao.api.listagem_exigencias_nrc import listar_sugeridas
 from accounts.models import Usuario
 from propriedade.models import Propriedade
 from .models import Lote
 from .serializers import LoteSerializer
 
+# pylint: disable= no-member, unused-argument, too-many-ancestors
 
 class LoteViewSet(viewsets.ModelViewSet):
+    '''
+    ViewSet para o modelo Lote.
+    - GET  /api/lotes/                → todos os lotes do usuário logado
+    - GET  /api/lotes/?search=        → busca por nome, raça, sistema, categoria ou fase
+    - GET  /api/lotes/?propriedade_id= → filtra por propriedade
+    - POST /api/lotes/                → cria lote (propriedade deve pertencer ao usuário)
+    - PUT/PATCH /api/lotes/{id}/      → edita lote (propriedade deve pertencer ao usuário)
+    - DELETE /api/lotes/{id}/         → exclui lote (propriedade deve pertencer ao usuário)
+    - GET  /api/lotes/{id}/exigencia/ → sugere exigências NRC para escolha manual do usuário
+    '''
     serializer_class = LoteSerializer
     permission_classes = [IsAuthenticated]
 
     # Queryset restrito ao usuário autenticado (via propriedade)
     def get_queryset(self):
+        '''Retorna o queryset de lotes do usuário autenticado.'''
         user = self.request.user
         if user.is_staff or user.is_superuser:
             return Lote.objects.select_related('propriedade__usuario').all()
@@ -29,6 +46,7 @@ class LoteViewSet(viewsets.ModelViewSet):
             return Lote.objects.none()
 
     def filter_queryset(self, queryset):
+        '''filtra o queryset de lotes com base nos parâmetros de busca e propriedade_id'''
         params = self.request.query_params
         search = params.get('search', '')
         propriedade_id = params.get('propriedade_id', '')
@@ -50,54 +68,36 @@ class LoteViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         propriedade_id = self.request.data.get('propriedade')
         try:
-            propriedade = Propriedade.objects.get(pk=propriedade_id)
-        except Propriedade.DoesNotExist:
-            from rest_framework.exceptions import NotFound
-            raise NotFound('Propriedade não encontrada.')
+            propriedade = self._get_propriedade_permitida(propriedade_id)
+        except Propriedade.DoesNotExist as exc:
+            raise NotFound('Propriedade não encontrada.') from exc
 
-        perfil = self.request.user.perfil_usuario
-        if propriedade.usuario != perfil and not self.request.user.is_staff:
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied(
-                'Você não tem permissão para adicionar lotes a esta propriedade.'
-            )
-        serializer.save()
+        # Passa a propriedade validada diretamente para o save do serializer
+        serializer.save(propriedade=propriedade)
 
-    # Ação: busca a exigência NRC correspondente a este lote
+    def _get_propriedade_permitida(self, propriedade_id):
+        qs = Propriedade.objects.all()
+        if not (self.request.user.is_staff or self.request.user.is_superuser):
+            perfil = self.request.user.perfil_usuario
+            qs = qs.filter(usuario=perfil)
+        return qs.get(pk=propriedade_id)
+
+    # Ação: sugere exigências NRC para escolha manual do usuário
     # GET /api/lotes/{id}/exigencia/
     @action(detail=True, methods=['get'])
     def exigencia(self, request, pk=None):
-        """Retorna a exigência NRC mais próxima para os parâmetros do lote."""
+        """Retorna exigências NRC sugeridas; não escolhe automaticamente."""
         lote = self.get_object()
 
-        from exigencia_nrc.models import ExigenciaNRC
-        from exigencia_nrc.serializers import ExigenciaNRCSerializer
-
-        qs = ExigenciaNRC.objects.filter(
-            categoria=lote.categoria,
-            fase=lote.fase,
-        )
-
-        # Filtra tipo_parto quando a fase exige
-        from lote.models import FASES_COM_PARTO_E_DIAS
-        if lote.fase in FASES_COM_PARTO_E_DIAS and lote.tipo_parto:
-            qs = qs.filter(tipo_parto=lote.tipo_parto)
+        qs = listar_sugeridas(lote)
 
         if not qs.exists():
             return Response(
-                {'detail': 'Nenhuma exigência NRC encontrada para esta combinação.'},
+                {'detail': 'Nenhuma exigência NRC sugerida para este lote.'},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        # Escolhe a linha cujo pv_kg é mais próximo do peso do lote
-        best = min(qs, key=lambda e: abs((e.pv_kg or 0) - lote.peso_vivo))
-
-        # Se há múltiplas com mesmo pv_kg, prioriza gmd mais próximo
-        mesmo_pv = [e for e in qs if e.pv_kg == best.pv_kg]
-        if len(mesmo_pv) > 1 and lote.gmd_esperado:
-            best = min(
-                mesmo_pv,
-                key=lambda e: abs((e.gmd_kg or 0) - lote.gmd_esperado),
-            )
-
-        return Response(ExigenciaNRCSerializer(best).data)
+        return Response({
+            'detail': 'Escolha uma exigência NRC para usar como ponto de partida.',
+            'resultados': ExigenciaNRCSerializer(qs, many=True).data,
+        })

@@ -38,7 +38,7 @@ import numpy as np
 from scipy.optimize import minimize, nnls
 from scipy.optimize import Bounds
 
-from formulacao.domain.nutrientes import NUTRIENTES_ORDEM, Nutriente
+from formulacao.domain.nutrientes import NUTRIENTES_ORDEM, Nutriente, indice_de
 from formulacao.domain.participacao import OrigemParticipacao, ParticipacaoVetor
 from formulacao.domain.requisito import RequisitoNutriente
 
@@ -287,26 +287,29 @@ class MotorAdequacao:
         ]
 
         for nutriente, requisito in requisitos.items():
+            lo, hi = requisito.limites_lp()
+
+            if nutriente == Nutriente.CA_P:
+                cls._adicionar_restricoes_relacao_ca_p(
+                    constraints=constraints,
+                    matriz_M_sub=matriz_M_sub,
+                    contrib_fixas=contrib_fixas,
+                    lo=lo,
+                    hi=hi,
+                )
+                continue
+
             idx  = NUTRIENTES_ORDEM.index(nutriente)
             coef = matriz_M_sub[:, idx]           # % da MS por ingrediente
             fixa = float(contrib_fixas[idx])       # contribuição travada
 
-            lo, hi = requisito.limites_lp()
-
-            if lo is not None:
-                rhs_lo = lo - fixa
-                constraints.append({
-                    "type": "ineq",
-                    "fun":  lambda x, c=coef, r=rhs_lo: float(c @ x) - r,
-                    "jac":  lambda x, c=coef: c,
-                })
-            if hi is not None:
-                rhs_hi = hi - fixa
-                constraints.append({
-                    "type": "ineq",
-                    "fun":  lambda x, c=coef, r=rhs_hi: r - float(c @ x),
-                    "jac":  lambda x, c=coef: -c,
-                })
+            cls._adicionar_restricoes_limite(
+                constraints=constraints,
+                coef=coef,
+                fixa=fixa,
+                lo=lo,
+                hi=hi,
+            )
 
         bounds = Bounds(
             lb=[b[0] for b in bounds_sub],
@@ -348,6 +351,63 @@ class MotorAdequacao:
         )
 
     @staticmethod
+    def _adicionar_restricoes_limite(
+        constraints: list[dict],
+        coef: np.ndarray,
+        fixa: float,
+        lo: float | None,
+        hi: float | None,
+    ) -> None:
+        if lo is not None:
+            rhs_lo = lo - fixa
+            constraints.append({
+                "type": "ineq",
+                "fun": lambda x, c=coef, r=rhs_lo: float(c @ x) - r,
+                "jac": lambda x, c=coef: c,
+            })
+        if hi is not None:
+            rhs_hi = hi - fixa
+            constraints.append({
+                "type": "ineq",
+                "fun": lambda x, c=coef, r=rhs_hi: r - float(c @ x),
+                "jac": lambda x, c=coef: -c,
+            })
+
+    @staticmethod
+    def _adicionar_restricoes_relacao_ca_p(
+        constraints: list[dict],
+        matriz_M_sub: np.ndarray,
+        contrib_fixas: np.ndarray,
+        lo: float | None,
+        hi: float | None,
+    ) -> None:
+        idx_ca = indice_de(Nutriente.CA)
+        idx_p = indice_de(Nutriente.P)
+
+        coef_ca = matriz_M_sub[:, idx_ca]
+        coef_p = matriz_M_sub[:, idx_p]
+        fixa_ca = float(contrib_fixas[idx_ca])
+        fixa_p = float(contrib_fixas[idx_p])
+
+        if lo is not None:
+            coef = coef_ca - (lo * coef_p)
+            fixa = fixa_ca - (lo * fixa_p)
+            constraints.append({
+                "type": "ineq",
+                "fun": lambda x, c=coef, f=fixa: float(c @ x) + f,
+                "jac": lambda x, c=coef: c,
+            })
+
+        if hi is not None:
+            coef = coef_ca - (hi * coef_p)
+            fixa = fixa_ca - (hi * fixa_p)
+            constraints.append({
+                "type": "ineq",
+                "fun": lambda x, c=coef, f=fixa: -(float(c @ x) + f),
+                "jac": lambda x, c=coef: -c,
+            })
+
+    @staticmethod
     def _fallback_nnls(
         matriz_M_sub: np.ndarray,
         requisitos: dict[Nutriente, RequisitoNutriente],
@@ -367,10 +427,27 @@ class MotorAdequacao:
         linhas_A, linhas_b = [], []
 
         for nutriente, requisito in requisitos.items():
+            lo, hi = requisito.limites_lp()
+
+            if nutriente == Nutriente.CA_P:
+                idx_ca = indice_de(Nutriente.CA)
+                idx_p = indice_de(Nutriente.P)
+                coef_ca = matriz_M_sub[:, idx_ca]
+                coef_p = matriz_M_sub[:, idx_p]
+                fixa_ca = float(contrib_fixas[idx_ca])
+                fixa_p = float(contrib_fixas[idx_p])
+
+                if lo is not None:
+                    linhas_A.append(coef_ca - (lo * coef_p))
+                    linhas_b.append(-(fixa_ca - (lo * fixa_p)))
+                if hi is not None:
+                    linhas_A.append(-(coef_ca - (hi * coef_p)))
+                    linhas_b.append(fixa_ca - (hi * fixa_p))
+                continue
+
             idx  = NUTRIENTES_ORDEM.index(nutriente)
             coef = matriz_M_sub[:, idx]
             fixa = float(contrib_fixas[idx])
-            lo, hi = requisito.limites_lp()
 
             if lo is not None:
                 linhas_A.append(coef)

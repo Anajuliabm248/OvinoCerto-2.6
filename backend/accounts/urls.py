@@ -1,3 +1,6 @@
-from django.urls import path
+''' urls do app accounts'''
+
+# pylint: skip-file
+
 app_name = 'accounts'
 urlpatterns = []

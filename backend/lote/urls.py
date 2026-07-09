@@ -1,4 +1,5 @@
-from django.urls import path
+"""urls do app de lote"""
+# pylint: skip-file
 
 app_name = 'lote'
 

@@ -1,6 +1,10 @@
+""" models do app de ingrediente"""
+
 from django.db import models
+import numpy as np
 from accounts.models import Usuario
 
+# pylint: disable= no-member, too-few-public-methods
 
 CLASSIFICACAO_CHOICES = [
     ('volumoso',    'Volumoso'),
@@ -38,7 +42,7 @@ class Ingrediente(models.Model):
     - fonte_valadares=True  →  ingrediente da base do excel, read-only
     - fonte_valadares=False →  ingrediente customizado pelo usuário
     """
-    
+
     usuario = models.ForeignKey(
         Usuario,
         on_delete=models.CASCADE,
@@ -90,6 +94,7 @@ class Ingrediente(models.Model):
     dt_atualizacao = models.DateTimeField(auto_now=True)
 
     class Meta:
+        '''classe meta, define o nome do model e a ordenação padrão'''
         verbose_name          = 'Ingrediente'
         verbose_name_plural   = 'Ingredientes'
         ordering              = ['classificacao', 'tipo', 'nome']
@@ -104,5 +109,4 @@ class Ingrediente(models.Model):
 
     def to_vetor_nutricional(self):
         """Retorna array numpy com [pb, ndt, fdn, ee, ca, p] em %."""
-        import numpy as np
         return np.array([self.pb, self.ndt, self.fdn, self.ee, self.ca, self.p])

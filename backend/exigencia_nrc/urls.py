@@ -1,3 +1,6 @@
-from django.urls import path
+""" urls do app exigencia nrc"""
+
+# pylint: skip-file
+
 app_name = 'exigencia_nrc'
 urlpatterns = []

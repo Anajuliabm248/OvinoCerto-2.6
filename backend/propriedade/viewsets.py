@@ -1,5 +1,6 @@
-from rest_framework import serializers, viewsets, status
-from rest_framework.response import Response
+"""viewset do app de propriedade"""
+
+from rest_framework import serializers, viewsets
 from rest_framework.permissions import IsAuthenticated
 from django.db.models import Q
 
@@ -7,11 +8,21 @@ from accounts.models import Usuario
 from .models import Propriedade
 from .serializers import PropriedadeSerializer
 
+# pylint: disable= no-member, too-many-ancestors
 
 class PropriedadeViewSet(viewsets.ModelViewSet):
+    '''
+    ViewSet para o modelo Propriedade
+    - GET  /api/propriedades/            → lista todas as propriedades do usuário logado
+    - GET  /api/propriedades/?search=    → busca por nome, cnpj, proprietário, 
+                                            uf, cidade ou localidade
+    - POST /api/propriedades/            → cria uma nova propriedade 
+                                            (associada ao usuário logado)
+    - PUT/PATCH /api/propriedades/{id}/  → atualiza uma propriedade (só as próprias)
+    - DELETE /api/propriedades/{id}/     → exclui uma propriedade (só as próprias)
+    '''
     serializer_class = PropriedadeSerializer
     permission_classes = [IsAuthenticated]
-
 
     # Queryset restrito ao usuário autenticado
     def get_queryset(self):
@@ -42,7 +53,7 @@ class PropriedadeViewSet(viewsets.ModelViewSet):
         try:
             perfil = self.request.user.perfil_usuario
             serializer.save(usuario=perfil)
-        except Usuario.DoesNotExist:
+        except Usuario.DoesNotExist as exc:
             raise serializers.ValidationError(
                 {'detail': 'Complete seu perfil antes de criar uma propriedade.'}
-            )
+            ) from exc

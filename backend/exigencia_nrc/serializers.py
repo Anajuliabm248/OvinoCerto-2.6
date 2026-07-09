@@ -1,8 +1,12 @@
+""" serializers do app de exigencias nutricionais segundo NRC"""
+
 from rest_framework import serializers
 from .models import ExigenciaNRC
 
+# pylint: disable= too-few-public-methods
 
 class ExigenciaNRCSerializer(serializers.ModelSerializer):
+    '''Serializer para o modelo ExigenciaNRC'''
     categoria_display = serializers.CharField(
         source='get_categoria_display', read_only=True
     )
@@ -14,6 +18,7 @@ class ExigenciaNRCSerializer(serializers.ModelSerializer):
     )
 
     class Meta:
+        '''Classe meta, define o model e os campos a serem serializados'''
         model = ExigenciaNRC
         fields = [
             'id',

@@ -17,12 +17,10 @@ quando cada problema apareceu e quando foi corrigido (seção 12).
 
 from __future__ import annotations
 
-import datetime
-
 from django.db import transaction
 from django.utils import timezone
 
-from formulacao.models import Alerta, SeveridadeAlerta, TipoAlerta
+from formulacao.models import Alerta
 
 
 @transaction.atomic
@@ -71,20 +69,31 @@ def upsert_alertas(
         )
 
     
-    # Passo 2: inserir alertas novos (que não existem já como ativos)
+    # Passo 2: atualizar alertas persistentes e inserir alertas novos.
+    # Se o mesmo alerta continua ativo em uma nova versão, mantemos a
+    # versão de geração original, mas atualizamos severidade e valores.
     
-    chaves_ja_ativas: set[tuple] = {
-        (_normalizar(a.nutriente), a.tipo)
-        for a in Alerta.objects.filter(
+    ativos_por_chave = {
+        (_normalizar(alerta.nutriente), alerta.tipo): alerta
+        for alerta in Alerta.objects.select_for_update().filter(
             formulacao_id=formulacao_id,
             resolvido=False,
-        ).values_list("nutriente", "tipo")
+        )
     }
 
+    para_atualizar = []
     para_criar = []
     for n in novos:
         chave = (_normalizar(n["nutriente"]), n["tipo"])
-        if chave not in chaves_ja_ativas:
+        alerta_ativo = ativos_por_chave.get(chave)
+
+        if alerta_ativo:
+            alerta_ativo.severidade = n["severidade"]
+            alerta_ativo.valor_atual = n["valor_atual"]
+            alerta_ativo.valor_limite = n["valor_limite"]
+            alerta_ativo.magnitude_relativa = n["magnitude_relativa"]
+            para_atualizar.append(alerta_ativo)
+        else:
             para_criar.append(
                 Alerta(
                     formulacao_id=formulacao_id,
@@ -98,6 +107,17 @@ def upsert_alertas(
                     resolvido=False,
                 )
             )
+
+    if para_atualizar:
+        Alerta.objects.bulk_update(
+            para_atualizar,
+            fields=[
+                "severidade",
+                "valor_atual",
+                "valor_limite",
+                "magnitude_relativa",
+            ],
+        )
 
     if para_criar:
         Alerta.objects.bulk_create(para_criar)

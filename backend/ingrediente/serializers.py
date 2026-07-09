@@ -1,8 +1,12 @@
+"""serializers de ingredientes"""
+
 from rest_framework import serializers
 from .models import Ingrediente
 
+# pylint: disable= too-few-public-methods
 
 class IngredienteSerializer(serializers.ModelSerializer):
+    '''serializer do ingrediente'''
     classificacao_display = serializers.CharField(
         source='get_classificacao_display', read_only=True
     )
@@ -14,6 +18,7 @@ class IngredienteSerializer(serializers.ModelSerializer):
     )
 
     class Meta:
+        '''classe meta, define os campos do serializer'''
         model = Ingrediente
         fields = [
             'id',
@@ -45,7 +50,8 @@ class IngredienteSerializer(serializers.ModelSerializer):
         ]
 
     def validate(self, attrs):
-        # Ingredientes Valadares não podem ser editados via API
+        '''Ingredientes Valadares não podem ser editados via API'''
+
         instance = getattr(self, 'instance', None)
         if instance and instance.fonte_valadares:
             raise serializers.ValidationError(

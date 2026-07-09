@@ -231,6 +231,7 @@ class TestMotorRecalculo:
         assert vt.get(Nutriente.EE)  == pytest.approx(2.6)
         assert vt.get(Nutriente.CA)  == pytest.approx(0.24)
         assert vt.get(Nutriente.P)   == pytest.approx(0.35)
+        assert vt.get(Nutriente.CA_P) == pytest.approx(0.24 / 0.35)
 
     def test_ms_kg_ingredientes(self):
         saida = MotorRecalculo.calcular(self._entrada(cms_kg=2.0))
@@ -291,11 +292,11 @@ class TestMotorRecalculo:
     def test_montar_matriz_shape(self):
         vetores = [_vetor(pb=10.0), _vetor(pb=20.0), _vetor(pb=30.0)]
         M = MotorRecalculo.montar_matriz(vetores)
-        assert M.shape == (3, 6)  # 3 ingredientes x 6 nutrientes
+        assert M.shape == (3, len(NUTRIENTES_ORDEM))
 
     def test_montar_matriz_vazia(self):
         M = MotorRecalculo.montar_matriz([])
-        assert M.shape == (0, 6)
+        assert M.shape == (0, len(NUTRIENTES_ORDEM))
 
     def test_cms_zero_levanta_erro(self):
         entrada_invalida = dict(

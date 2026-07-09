@@ -6,6 +6,9 @@ Uso:
     python manage.py seed_ingredientes --excel /caminho/para/arquivo.xlsx
     python manage.py seed_ingredientes --limpar   # apaga Valadares antes de importar
 """
+
+# pylint: skip-file
+
 import os
 from django.core.management.base import BaseCommand, CommandError
 

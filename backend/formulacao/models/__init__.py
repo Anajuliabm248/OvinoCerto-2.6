@@ -1,4 +1,5 @@
 '''Starta todos os models'''
+# pylint: skip-file
 
 from .formulacao import Formulacao, StatusFormulacao
 from .exigencia_configurada import (

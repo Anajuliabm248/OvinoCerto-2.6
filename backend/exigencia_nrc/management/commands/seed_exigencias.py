@@ -10,8 +10,9 @@ import os
 import unicodedata
 from django.core.management.base import BaseCommand, CommandError
 
+# pylint: skip-file
 
-# Mapeamento: nome da categoria no Excel 
+# Mapeamento: nome da categoria no Excel
 CATEGORIA_MAP = {
     'Cordeiros(as) (4 meses)': 'cordeiros_4_meses',
     'Cordeiros(as) (8 meses)': 'cordeiros_8_meses',

@@ -1,13 +1,32 @@
+"""serializers do app de lote"""
+
 from rest_framework import serializers
+from propriedade.models import Propriedade
+
 from .models import FASES_COM_PARTO_E_DIAS, FASES_VALIDAS, FASE_CHOICES, Lote
+
+# pylint: disable= no-member, too-few-public-methods
 
 FASE_LABELS = dict(FASE_CHOICES)
 
-
 class LoteSerializer(serializers.ModelSerializer):
+    '''Serializer para o modelo Lote.'''
     propriedade_nome = serializers.CharField(source='propriedade.nome', read_only=True)
-    
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get('request')
+        if not request or request.user.is_staff or request.user.is_superuser:
+            return
+
+        perfil = getattr(request.user, 'perfil_usuario', None)
+        if perfil is None:
+            self.fields['propriedade'].queryset = Propriedade.objects.none()
+        else:
+            self.fields['propriedade'].queryset = Propriedade.objects.filter(usuario=perfil)
+
     class Meta:
+        '''classe meta, define o nome do model e a ordenação padrão'''
         model = Lote
         fields = [
             'id',
@@ -30,6 +49,7 @@ class LoteSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'dt_cadastro', 'dt_atualizacao']
 
     def validate(self, attrs):
+        '''Valida os campos do serializer de acordo com as regras de negócio.'''
         instance = getattr(self, 'instance', None)
         categoria = attrs.get('categoria', getattr(instance, 'categoria', None))
         fase = attrs.get('fase', getattr(instance, 'fase', None))

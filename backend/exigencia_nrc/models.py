@@ -1,14 +1,14 @@
+""" models do app de exigencias nutricionais segundo NRC"""
+
 from django.db import models
 
-# Importa as choices do app lote (mesmo pacote, sem prefixo 'backend.')
 from lote.models import (
     CATEGORIA_CHOICES,
     FASE_CHOICES,
-    TIPO_PARTO_CHOICES,
-    FASES_VALIDAS,
-    FASES_COM_PARTO_E_DIAS,
+    TIPO_PARTO_CHOICES
 )
 
+# pylint: disable=too-few-public-methods, no-member
 
 class ExigenciaNRC(models.Model):
     """
@@ -114,6 +114,7 @@ class ExigenciaNRC(models.Model):
     )
 
     class Meta:
+        '''classe meta, define o nome do model e a ordenação padrão'''
         verbose_name = 'Exigência Nutricional (NRC)'
         verbose_name_plural = 'Exigências Nutricionais (NRC)'
         ordering = ['categoria', 'fase', 'pv_kg', 'gmd_kg']
@@ -123,4 +124,5 @@ class ExigenciaNRC(models.Model):
 
     def __str__(self):
         gmd_str = f' GMD={self.gmd_kg}' if self.gmd_kg else ''
-        return f'{self.get_categoria_display()} | {self.get_fase_display()} | PV={self.pv_kg}kg{gmd_str}'
+        return f'{self.get_categoria_display()} | {self.get_fase_display()} \
+            | PV={self.pv_kg}kg{gmd_str}'
