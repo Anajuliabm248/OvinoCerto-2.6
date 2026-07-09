@@ -3,17 +3,17 @@ Serializers DRF para o módulo de formulação.
 
 Responsabilidade única: tradução HTTP <-> DTOs.
 
-NOTA DE BUGS CORRIGIDOS
------------------------
-PrimaryKeyRelatedField com `source=` fazia validated_data usar o nome
-da source como chave (ex.: "lote" em vez de "lote_id"), quebrando o
-acesso no viewset. Removemos `source=` de todos os campos de PK —
-validated_data agora usa o nome do campo e retorna a instância do
-model; o viewset chama .pk explicitamente onde o service espera int.
+Campos de entrada usam style={"base_template": ...} para que o
+DRF browsable API renderize elementos HTML nativos em vez do textarea
+JSON padrão:
+  select.html          → <select>         (FK única)
+  select_multiple.html → <select multiple> (FK many=True)
+  input.html           → <input type="text">
+  textarea.html        → <textarea>
 
-Todos os serializers de entrada agora recebem context para que os
-querysets dinâmicos (lotes do usuário, ingredientes disponíveis) sejam
-filtrados corretamente na API navegável do DRF.
+NOTA: labels dos <select> usam str(instance) — os models de Lote,
+Ingrediente e ExigenciaNRC devem ter __str__ legível para o formulário
+fazer sentido visualmente.
 """
 
 from django.db.models import Q
@@ -33,7 +33,7 @@ from lote.models import Lote
 
 
 # ---------------------------------------------------------------------------
-# Helpers de contexto (usados em __init__ dos serializers de entrada)
+# Helpers de contexto
 # ---------------------------------------------------------------------------
 
 def _perfil(context):
@@ -67,7 +67,7 @@ def _ingredientes_do_usuario(context):
 
 
 # ---------------------------------------------------------------------------
-# Exigências NRC (seleção pelo usuário antes de iniciar)
+# Exigências NRC
 # ---------------------------------------------------------------------------
 
 class ExigenciaNRCSerializer(serializers.ModelSerializer):
@@ -106,27 +106,33 @@ class IngredienteDisponivelSerializer(serializers.Serializer):
 
 
 # ---------------------------------------------------------------------------
-# Criação — etapa 1: iniciar
+# Etapa 1: iniciar formulação
 # ---------------------------------------------------------------------------
 
 class IniciarFormulacaoInputSerializer(serializers.Serializer):
-    """
-    lote_id e exigencia_nrc_id retornam instâncias do model —
-    chame .pk no viewset ao passar para o service.
-    """
     lote_id = serializers.PrimaryKeyRelatedField(
         queryset=Lote.objects.none(),
         label="Lote",
         help_text="Escolha um dos seus lotes.",
+        style={"base_template": "select.html"},
     )
     exigencia_nrc_id = serializers.PrimaryKeyRelatedField(
         queryset=ExigenciaNRC.objects.all().order_by("categoria", "fase", "pv_kg", "gmd_kg"),
         label="Exigência NRC",
-        help_text="ID da ExigenciaNRC escolhida na listagem sugerida.",
+        help_text="Tabela NRC de referência para a formulação.",
+        style={"base_template": "select.html"},
     )
-    titulo      = serializers.CharField(max_length=200, label="Título")
+    titulo = serializers.CharField(
+        max_length=200,
+        label="Título",
+        style={"base_template": "input.html"},
+    )
     observacoes = serializers.CharField(
-        required=False, allow_blank=True, default="", label="Observações"
+        required=False,
+        allow_blank=True,
+        default="",
+        label="Observações",
+        style={"base_template": "textarea.html", "rows": 3},
     )
 
     def __init__(self, *args, **kwargs):
@@ -135,27 +141,25 @@ class IniciarFormulacaoInputSerializer(serializers.Serializer):
 
 
 # ---------------------------------------------------------------------------
-# Criação — etapa 2: gerar distribuição inicial
+# Etapa 2: gerar distribuição inicial
 # ---------------------------------------------------------------------------
 
 class GerarFormulacaoInicialInputSerializer(serializers.Serializer):
-    """
-    ingrediente_ids retorna lista de instâncias Ingrediente —
-    use [i.pk for i in validated_data["ingrediente_ids"]] no viewset.
-    """
     ingrediente_ids = serializers.PrimaryKeyRelatedField(
         many=True,
         queryset=Ingrediente.objects.none(),
         label="Ingredientes",
-        help_text="Selecione um ou mais ingredientes para gerar a formulação inicial.",
+        help_text="Segure Ctrl/Cmd para selecionar vários.",
+        style={"base_template": "select_multiple.html"},
     )
     percentual_alvo_volumoso = serializers.FloatField(
         required=False,
         default=0.50,
         min_value=0.0,
         max_value=1.0,
-        label="% alvo volumosos (0-1)",
+        label="% alvo volumosos (0–1)",
         help_text="Fração-alvo de volumosos na distribuição heurística. Padrão 0.50.",
+        style={"base_template": "input.html"},
     )
 
     def __init__(self, *args, **kwargs):
@@ -178,25 +182,32 @@ class ConfiguracaoNutrienteSerializer(serializers.ModelSerializer):
 
 
 class AtualizarExigenciaInputSerializer(serializers.Serializer):
-    operador  = serializers.ChoiceField(
+    operador = serializers.ChoiceField(
         choices=["=", ">=", "<=", "ENTRE"],
         label="Operador",
         help_text="'=' exato  |  '>=' mínimo  |  '<=' máximo  |  'ENTRE' intervalo",
+        style={"base_template": "select.html"},
     )
-    valor     = serializers.FloatField(
+    valor = serializers.FloatField(
         required=False,
+        allow_null=True,
         label="Valor",
-        help_text="Use para operadores '=' '>=', '<='.",
+        help_text="Use para os operadores '=', '>=' e '<='.",
+        style={"base_template": "input.html"},
     )
     valor_min = serializers.FloatField(
         required=False,
+        allow_null=True,
         label="Valor mínimo",
-        help_text="Use para operador 'ENTRE'.",
+        help_text="Use para o operador 'ENTRE'.",
+        style={"base_template": "input.html"},
     )
     valor_max = serializers.FloatField(
         required=False,
+        allow_null=True,
         label="Valor máximo",
-        help_text="Use para operadores '<=' e 'ENTRE'.",
+        help_text="Use para os operadores '<=' e 'ENTRE'.",
+        style={"base_template": "input.html"},
     )
 
 
@@ -232,6 +243,7 @@ class AjustarParticipacaoInputSerializer(serializers.Serializer):
         max_value=100.0,
         label="Participação % MS",
         help_text="Percentual de matéria seca (0 a 100).",
+        style={"base_template": "input.html"},
     )
 
     def get_fracao(self) -> float:
@@ -239,13 +251,11 @@ class AjustarParticipacaoInputSerializer(serializers.Serializer):
 
 
 class AdicionarIngredienteInputSerializer(serializers.Serializer):
-    """
-    ingrediente_id retorna instância Ingrediente — use .pk no viewset.
-    """
     ingrediente_id = serializers.PrimaryKeyRelatedField(
         queryset=Ingrediente.objects.none(),
         label="Ingrediente",
         help_text="Selecione o ingrediente a adicionar.",
+        style={"base_template": "select.html"},
     )
 
     def __init__(self, *args, **kwargs):
@@ -263,17 +273,14 @@ class SugestaoIngredienteSerializer(serializers.Serializer):
     classificacao        = serializers.CharField()
     tipo                 = serializers.CharField()
     custo_kg             = serializers.FloatField()
-    # Composição bromatológica
     pb                   = serializers.FloatField()
     ndt                  = serializers.FloatField()
     fdn                  = serializers.FloatField()
     ee                   = serializers.FloatField()
     ca                   = serializers.FloatField()
     p                    = serializers.FloatField()
-    # Ranking
     score                = serializers.FloatField()
     distancia_euclidiana = serializers.FloatField(allow_null=True)
-    # Projeção what-if (delta % MS se ~5 % for incluído)
     delta_pb             = serializers.FloatField()
     delta_ndt            = serializers.FloatField()
     delta_fdn            = serializers.FloatField()
@@ -326,18 +333,18 @@ class FormulacaoDetailSerializer(serializers.ModelSerializer):
 
 
 # ---------------------------------------------------------------------------
-# Resultado de adequação (do payload do último snapshot)
+# Resultado de adequação
 # ---------------------------------------------------------------------------
 
 class DesvioOutputSerializer(serializers.Serializer):
-    nutriente            = serializers.CharField()
-    valor_atual          = serializers.FloatField()
-    operador             = serializers.CharField()
-    valor_min            = serializers.FloatField(allow_null=True)
-    valor_max            = serializers.FloatField(allow_null=True)
+    nutriente             = serializers.CharField()
+    valor_atual           = serializers.FloatField()
+    operador              = serializers.CharField()
+    valor_min             = serializers.FloatField(allow_null=True)
+    valor_max             = serializers.FloatField(allow_null=True)
     alterado_pelo_usuario = serializers.BooleanField()
-    status               = serializers.CharField()
-    magnitude_relativa   = serializers.FloatField()
+    status                = serializers.CharField()
+    magnitude_relativa    = serializers.FloatField()
 
 
 class ResultadoAdequacaoOutputSerializer(serializers.Serializer):

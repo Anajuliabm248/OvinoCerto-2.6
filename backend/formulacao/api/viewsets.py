@@ -2,22 +2,22 @@
 ViewSet DRF para o módulo de formulação.
 
 Responsabilidade única: tradução HTTP <-> Application Services.
-Nenhuma lógica de negócio aqui. ValueError dos services é capturado
-e convertido em HTTP 400 com a mensagem original.
 
-CORREÇÕES aplicadas nesta versão
----------------------------------
-1. Todos os serializers de entrada recebem context=self.get_serializer_context()
-   para que querysets dinâmicos (lotes do usuário, ingredientes) sejam
-   filtrados corretamente na API navegável do DRF.
+Para o DRF browsable API renderizar formulários HTML nativos (não JSON),
+dois ajustes foram feitos:
 
-2. PrimaryKeyRelatedField sem `source=`: validated_data agora usa o
-   nome do campo e retorna instâncias do model. O viewset chama .pk
-   explicitamente ao passar para services que esperam int.
+1. get_serializer_class() mapeia CADA action ao serializer de entrada
+   correto. O browsable API chama get_serializer() ao montar o formulário
+   da página — sem esse mapa ele não sabe o que renderizar.
 
-3. Adicionados os endpoints:
-   GET  /formulacoes/{id}/sugestoes/
-   POST /formulacoes/{id}/versoes/{num}/restaurar/
+2. Todas as actions usam self.get_serializer(data=request.data) em vez
+   de instanciar o serializer diretamente. get_serializer() injeta o
+   context automaticamente (request, format, view), necessário para os
+   querysets dinâmicos de lote e ingrediente.
+
+Os campos dos serializers de entrada têm style={"base_template": ...}
+que instrui o renderer HTML a usar <select>, <select multiple>,
+<input> ou <textarea> em vez do textarea JSON padrão.
 """
 
 from __future__ import annotations
@@ -67,9 +67,21 @@ from lote.models import Lote
 
 
 class _NRCPagination(PageNumberPagination):
-    page_size            = 20
+    page_size             = 20
     page_size_query_param = "page_size"
-    max_page_size        = 100
+    max_page_size         = 100
+
+
+# Mapa de action → serializer de entrada (usado em get_serializer_class e
+# consequentemente pelo browsable API para renderizar o formulário HTML).
+_INPUT_SERIALIZER_MAP = {
+    "create":                IniciarFormulacaoInputSerializer,
+    "iniciar":               IniciarFormulacaoInputSerializer,
+    "gerar":                 GerarFormulacaoInicialInputSerializer,
+    "atualizar_exigencia":   AtualizarExigenciaInputSerializer,
+    "adicionar_ingrediente": AdicionarIngredienteInputSerializer,
+    "ajustar_ingrediente":   AjustarParticipacaoInputSerializer,
+}
 
 
 class FormulacaoViewSet(viewsets.ModelViewSet):
@@ -78,19 +90,20 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
 
     Rotas principais
     ----------------
-    GET    /formulacoes/                         → lista das formulações do usuário
-    POST   /formulacoes/                         → atalho para iniciar (= /iniciar/)
-    GET    /formulacoes/{id}/                    → detalhe completo (exigências + ingredientes)
+    GET    /formulacoes/                              lista das formulações do usuário
+    POST   /formulacoes/                              atalho para /iniciar/
+    GET    /formulacoes/{id}/                         detalhe completo
 
     Pré-formulação
     --------------
-    GET    /formulacoes/exigencias-nrc/          → exigências sugeridas por lote (ou catálogo)
-    GET    /formulacoes/ingredientes-disponiveis/ → catálogo ordenado volumoso→concentrado
+    GET    /formulacoes/exigencias-nrc/?lote_id=X     sugestões de NRC para o lote
+    GET    /formulacoes/exigencias-nrc/?todas=true    catálogo completo paginado
+    GET    /formulacoes/ingredientes-disponiveis/     catálogo ordenado volumoso→concentrado
 
     Fluxo de criação
     ----------------
-    POST   /formulacoes/iniciar/                 → etapa 1: lote + exigência NRC + título
-    POST   /formulacoes/{id}/gerar/              → etapa 2: selecionar ingredientes e formular
+    POST   /formulacoes/iniciar/                      etapa 1: lote + NRC + título
+    POST   /formulacoes/{id}/gerar/                   etapa 2: ingredientes → distribuição inicial
 
     Exigência configurada
     ---------------------
@@ -128,15 +141,31 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     serializer_class   = FormulacaoDetailSerializer
 
+    # ------------------------------------------------------------------
+    # Queryset e serializer
+    # ------------------------------------------------------------------
+
     def get_queryset(self):
         return self._qs_do_usuario(self.request)
 
     def get_serializer_class(self):
-        if self.action in ("create", "iniciar"):
-            return IniciarFormulacaoInputSerializer
-        if self.action == "list":
-            return FormulacaoListSerializer
-        return FormulacaoDetailSerializer
+        """
+        Retorna o serializer correto por action.
+        O browsable API usa este método para montar o formulário HTML
+        da página — sem o mapa, todas as actions POST/PATCH mostrariam
+        apenas o textarea JSON genérico.
+        """
+        return _INPUT_SERIALIZER_MAP.get(self.action, FormulacaoDetailSerializer)
+
+    def get_serializer(self, *args, **kwargs):
+        """
+        Para actions de entrada (POST/PATCH com input serializers customizados),
+        não passa a instância ao serializer para evitar que o DRF tente extrair
+        campos do modelo que não existem (ex: ms_porcent em AjustarParticipacaoInputSerializer).
+        """
+        if self.action in _INPUT_SERIALIZER_MAP:
+            kwargs.pop('instance', None)
+        return super().get_serializer(*args, **kwargs)
 
     # ------------------------------------------------------------------
     # Listagem / detalhe
@@ -155,25 +184,22 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
         return self._iniciar_formulacao(request)
 
     # ------------------------------------------------------------------
-    # Exigências NRC disponíveis (antes de iniciar)
+    # Exigências NRC disponíveis
     # ------------------------------------------------------------------
 
     @action(detail=False, methods=["get"], url_path="exigencias-nrc")
     def exigencias_nrc(self, request):
         """
         GET /formulacoes/exigencias-nrc/?lote_id=X
-            Sugestões ordenadas por proximidade de PV/GMD — sem paginação.
-
         GET /formulacoes/exigencias-nrc/?todas=true&page=N
-            Catálogo completo paginado (botão "ver mais").
         """
         lote_id = request.query_params.get("lote_id")
         todas   = request.query_params.get("todas", "").lower() in ("1", "true", "sim")
 
         if todas:
-            qs       = listar_todas()
+            qs        = listar_todas()
             paginator = _NRCPagination()
-            page     = paginator.paginate_queryset(qs, request)
+            page      = paginator.paginate_queryset(qs, request)
             return paginator.get_paginated_response(
                 ExigenciaNRCSerializer(page, many=True).data
             )
@@ -188,7 +214,7 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
         return Response(ExigenciaNRCSerializer(listar_sugeridas(lote), many=True).data)
 
     # ------------------------------------------------------------------
-    # Ingredientes disponíveis
+    # Catálogo de ingredientes
     # ------------------------------------------------------------------
 
     @action(detail=False, methods=["get"], url_path="ingredientes-disponiveis")
@@ -208,15 +234,11 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
         return self._iniciar_formulacao(request)
 
     def _iniciar_formulacao(self, request):
-        ser = IniciarFormulacaoInputSerializer(
-            data=request.data,
-            context=self.get_serializer_context(),
-        )
+        ser = self.get_serializer(data=request.data)
         ser.is_valid(raise_exception=True)
 
         try:
-            perfil = self._perfil(request)
-            # PrimaryKeyRelatedField sem source → validated_data retorna instâncias
+            perfil     = self._perfil(request)
             formulacao = IniciarFormulacaoService.executar(
                 lote_id          =ser.validated_data["lote_id"].pk,
                 exigencia_nrc_id =ser.validated_data["exigencia_nrc_id"].pk,
@@ -241,27 +263,21 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
         """
         POST /formulacoes/{id}/gerar/
 
-        Corpo esperado:
-        {
-          "ingrediente_ids": [1, 5, 12, 30],
-          "percentual_alvo_volumoso": 0.55   ← opcional, padrão 0.50
-        }
+        Selecione os ingredientes no campo multi-seleção e ajuste o
+        percentual-alvo de volumosos se necessário.
         """
         self._get_formulacao(request, pk)
 
-        ser = GerarFormulacaoInicialInputSerializer(
-            data=request.data,
-            context=self.get_serializer_context(),
-        )
+        ser = self.get_serializer(data=request.data)
         ser.is_valid(raise_exception=True)
 
         try:
             perfil     = self._perfil(request)
             formulacao = GerarFormulacaoInicialService.executar(
-                formulacao_id           =int(pk),
-                ingrediente_ids         =[i.pk for i in ser.validated_data["ingrediente_ids"]],
-                usuario_id              =perfil.id if perfil else None,
-                percentual_alvo_volumoso=ser.validated_data["percentual_alvo_volumoso"],
+                formulacao_id            =int(pk),
+                ingrediente_ids          =[i.pk for i in ser.validated_data["ingrediente_ids"]],
+                usuario_id               =perfil.id if perfil else None,
+                percentual_alvo_volumoso =ser.validated_data["percentual_alvo_volumoso"],
             )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -291,7 +307,7 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
         """
         PATCH /formulacoes/{id}/exigencia/{NUTRIENTE}/
 
-        Corpo (exemplos):
+        Exemplos de corpo:
           {"operador": ">=",    "valor": 14.0}
           {"operador": "<=",    "valor": 35.0}
           {"operador": "ENTRE", "valor_min": 14.0, "valor_max": 18.0}
@@ -299,7 +315,7 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
         """
         self._get_formulacao(request, pk)
 
-        ser = AtualizarExigenciaInputSerializer(data=request.data)
+        ser = self.get_serializer(data=request.data)
         ser.is_valid(raise_exception=True)
         d = ser.validated_data
 
@@ -325,17 +341,10 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"], url_path="ingredientes")
     def adicionar_ingrediente(self, request, pk=None):
-        """
-        POST /formulacoes/{id}/ingredientes/
-
-        Corpo: {"ingrediente_id": 42}
-        """
+        """POST /formulacoes/{id}/ingredientes/"""
         self._get_formulacao(request, pk)
 
-        ser = AdicionarIngredienteInputSerializer(
-            data=request.data,
-            context=self.get_serializer_context(),
-        )
+        ser = self.get_serializer(data=request.data)
         ser.is_valid(raise_exception=True)
 
         try:
@@ -383,14 +392,14 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
         """
         PATCH /formulacoes/{id}/ingredientes/{ing_form_id}/ajustar/
 
-        Corpo: {"ms_porcent": 35.5}   ← em percentual (0-100)
+        Corpo: {"ms_porcent": 35.5}
 
-        Trava o ingrediente como MANUAL_TRAVADA e dispara o recálculo.
-        Retorna o estado completo da formulação atualizado.
+        Trava o ingrediente (MANUAL_TRAVADA) e dispara o recálculo.
+        Retorna a formulação completa atualizada.
         """
         self._get_formulacao(request, pk)
 
-        ser = AjustarParticipacaoInputSerializer(data=request.data)
+        ser = self.get_serializer(data=request.data)
         ser.is_valid(raise_exception=True)
 
         try:
@@ -443,7 +452,7 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
         """
         POST /formulacoes/{id}/recalcular/
 
-        Idempotente: recalcula sem alterar participações.
+        Idempotente — recalcula sem alterar participações.
         Útil após mudar exigências configuradas sem redistribuir.
         """
         self._get_formulacao(request, pk)
@@ -467,12 +476,7 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["get"], url_path="resultado")
     def resultado(self, request, pk=None):
-        """
-        GET /formulacoes/{id}/resultado/
-
-        Retorna o resultado nutricional do último snapshot:
-        desvios por nutriente, alertas ativos e vetor total.
-        """
+        """GET /formulacoes/{id}/resultado/"""
         self._get_formulacao(request, pk)
 
         snapshot = SnapshotRepository.get_ultimo(int(pk))
@@ -486,11 +490,11 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
         alertas_ativos    = AlertaRepository.listar_ativos(int(pk))
 
         return Response({
-            "versao_num": snapshot.versao_num,
-            "cms_kg":     snapshot.payload.get("cms_kg"),
-            "resultado":  ResultadoAdequacaoOutputSerializer(resultado_payload).data,
+            "versao_num":  snapshot.versao_num,
+            "cms_kg":      snapshot.payload.get("cms_kg"),
+            "resultado":   ResultadoAdequacaoOutputSerializer(resultado_payload).data,
             "vetor_total": snapshot.payload.get("vetor_total", {}),
-            "alertas":    AlertaSerializer(alertas_ativos, many=True).data,
+            "alertas":     AlertaSerializer(alertas_ativos, many=True).data,
         })
 
     # ------------------------------------------------------------------
@@ -504,14 +508,6 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
             ?modo=adicionar           (padrão)
             ?modo=substituir&ing_form_id=X
             ?max_resultados=10        (padrão)
-
-        Modos
-        -----
-        adicionar  : sugere ingredientes não presentes na formulação,
-                     rankeados pelo quanto preenchem os déficits atuais.
-        substituir : sugere alternativas para o ingrediente indicado por
-                     ing_form_id, combinando score de adequação nutricional
-                     com distância euclidiana normalizada.
         """
         self._get_formulacao(request, pk)
 
@@ -577,12 +573,8 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
         """
         POST /formulacoes/{id}/versoes/{num}/restaurar/
 
-        Restaura as participações (%MS) do snapshot indicado e gera uma
-        nova versão — o histórico existente não é alterado.
-
-        Ingredientes adicionados APÓS o snapshot serão removidos.
-        Ingredientes já removidos antes do snapshot são ignorados
-        (ação registrada nos eventos de auditoria).
+        Restaura participações do snapshot indicado e gera nova versão.
+        O histórico existente não é alterado.
         """
         self._get_formulacao(request, pk)
 
@@ -599,7 +591,7 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
         return Response(FormulacaoDetailSerializer(formulacao).data)
 
     # ------------------------------------------------------------------
-    # Eventos (auditoria)
+    # Auditoria
     # ------------------------------------------------------------------
 
     @action(detail=True, methods=["get"], url_path="eventos")
