@@ -27,7 +27,7 @@ from __future__ import annotations
 from django.db import transaction
 
 from formulacao.domain.nutrientes import NUTRIENTES_ORDEM
-from formulacao.engines.motor_alertas import MotorAlertas
+from formulacao.engines.motor_alertas import MotorAlertas, ParticipacaoIngredienteLimite
 from formulacao.engines.motor_recalculo import EntradaRecalculo, MotorRecalculo, SaidaRecalculo
 from formulacao.models import TipoEvento
 from formulacao.repositories import (
@@ -66,6 +66,7 @@ class RecalcularFormulacaoService:
         
         participacao   = IngredienteFormulacaoRepository.get_participacao(formulacao_id)
         vetores        = IngredienteFormulacaoRepository.get_vetores_nutricionais(formulacao_id)
+        limites_ingredientes = IngredienteFormulacaoRepository.get_limites_participacao(formulacao_id)
         requisitos     = ExigenciaRepository.get_requisitos(formulacao_id)
         cms_kg         = ExigenciaRepository.get_cms_kg(formulacao_id)
         exigencia_payload = ExigenciaRepository.serializar_configuracao(formulacao_id)
@@ -108,8 +109,12 @@ class RecalcularFormulacaoService:
                 saida=saida,
             )
 
-            # Passo 6: avaliar alertas
-            alertas_dicts = MotorAlertas.avaliar(saida.resultado)
+            # Passo 6: avaliar alertas (nutricionais + limite por ingrediente)
+            alertas_nutrientes = MotorAlertas.avaliar(saida.resultado)
+            alertas_limites = MotorAlertas.avaliar_limites_ingredientes(
+                _montar_itens_limite(participacao, limites_ingredientes)
+            )
+            alertas_dicts = alertas_nutrientes + alertas_limites
 
             # Passo 7: construir payload do snapshot
             versao_anterior = SnapshotRepository.get_versao_atual(formulacao_id)
@@ -159,6 +164,32 @@ class RecalcularFormulacaoService:
 
 
 # Helpers
+
+def _montar_itens_limite(
+    participacao,
+    limites_ingredientes: list[dict],
+) -> list[ParticipacaoIngredienteLimite]:
+    """
+    Combina o ParticipacaoVetor (fracoes atuais) com os metadados de
+    limite_max_participacao carregados do banco, casando por
+    ing_form_id (não por posição — mais defensivo caso as duas
+    listagens algum dia divirjam em ordenação).
+    """
+    limites_por_id = {item["ing_form_id"]: item for item in limites_ingredientes}
+
+    itens = []
+    for pos, ing_form_id in enumerate(participacao.ids_ingredientes):
+        meta = limites_por_id.get(ing_form_id, {})
+        itens.append(
+            ParticipacaoIngredienteLimite(
+                ingrediente_formulacao_id=ing_form_id,
+                ingrediente_nome=meta.get("nome", "(removido)"),
+                fracao_atual=float(participacao.fracoes[pos]),
+                limite_max=meta.get("limite_max_fracao"),
+            )
+        )
+    return itens
+
 
 def _construir_payload(
     formulacao_id: int,

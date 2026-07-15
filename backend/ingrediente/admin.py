@@ -10,7 +10,7 @@ class IngredienteAdmin(admin.ModelAdmin):
     '''configuração do admin para o modelo Ingrediente'''
 
     list_display = ('nome', 'classificacao', 'tipo', 'ms', 'pb',
-                    'ndt', 'custo_kg', 'fonte_valadares', 'usuario',)
+                    'ndt', 'custo_kg', 'limite_max_participacao', 'fonte_valadares', 'usuario',)
     list_filter = ('classificacao', 'tipo', 'fonte_valadares',)
     search_fields = ('nome',)
     readonly_fields = ('fonte_valadares', 'dt_cadastro', 'dt_atualizacao',)

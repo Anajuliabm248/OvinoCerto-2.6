@@ -83,6 +83,18 @@ class Ingrediente(models.Model):
         verbose_name='Custo (R$/kg MN)',
     )
 
+    # Limite de inclusão na formulação
+    limite_max_participacao = models.FloatField(
+        null=True,
+        blank=True,
+        verbose_name='Limite máximo de participação (% MS)',
+        help_text=(
+            'Percentual máximo (0-100) que este ingrediente pode representar '
+            'na matéria seca total de uma formulação (ex.: bicarbonato de sódio '
+            'limitado a 1.5%). Deixe em branco para não aplicar nenhum limite.'
+        ),
+    )
+
     fonte_valadares = models.BooleanField(
         default=False,
         verbose_name='Base Valadares',

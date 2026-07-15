@@ -1,5 +1,8 @@
 """viewsets do app de ingredientes"""
 
+from email.policy import default
+
+from django.forms.fields import IntegerField
 import numpy as np
 
 from rest_framework import viewsets
@@ -7,7 +10,8 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied
-from django.db.models import Q
+from django.db.models import Q, Case, When, Value, IntegerField
+from django.db.models.functions import Lower
 
 from accounts.models import Usuario
 from .models import Ingrediente, CLASSIFICACAO_CHOICES, TIPO_CHOICES
@@ -72,7 +76,16 @@ class IngredienteViewSet(viewsets.ModelViewSet):
         if search:
             qs = qs.filter(nome__icontains=search)
 
-        return qs.select_related('usuario')
+        # filtro de ordenação para volumoso primeiro e por ordem alfabétoca
+        qs = qs.annotate(
+            e_volumoso=Case(
+                When(classificacao__iexact='volumoso', then=Value(0)),
+                default=Value(1),
+                output_field=IntegerField(),
+            )
+        )
+
+        return qs.order_by('e_volumoso', Lower('nome')).select_related('usuario')
 
 
     # Cria ingrediente custom associado ao usuário logado

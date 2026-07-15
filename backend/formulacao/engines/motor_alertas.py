@@ -14,6 +14,16 @@ Regras de severidade (configuráveis via thresholds):
 Alerta de SOMA (participações ≠ 100%):
   ATENCAO : desvio entre 0.1 e 1 ponto percentual
   CRITICO : desvio > 1 ponto percentual
+
+Alerta de LIMITE_INGREDIENTE (participação de um ingrediente acima do
+limite_max_participacao configurado no seu cadastro — ex.: bicarbonato
+de sódio limitado a 1.5% da MS):
+  Reaproveita os mesmos thresholds INFO/ATENCAO/CRITICO nutricionais,
+  calculados sobre o quanto a participação atual ultrapassa o limite,
+  proporcionalmente a ele (ex.: limite 2%, atual 2.5% → magnitude 0.25
+  → ATENCAO). Nunca bloqueia — mesma filosofia dos alertas nutricionais:
+  o valor travado manualmente pelo usuário pode ultrapassar o limite,
+  apenas é sinalizado.
 """
 
 from __future__ import annotations
@@ -34,6 +44,27 @@ class ThresholdsSeveridade:
 
 
 _DEFAULTS = ThresholdsSeveridade()
+
+
+@dataclass(frozen=True)
+class ParticipacaoIngredienteLimite:
+    """
+    Estado de participação de UM ingrediente, pronto para ser avaliado
+    contra seu limite_max_participacao (seção de limitação por
+    ingrediente). Populado pelo Application Service a partir de
+    IngredienteFormulacao + Ingrediente — o motor não conhece ORM.
+
+    ingrediente_formulacao_id : id do IngredienteFormulacao (referência
+                                 opaca, usada pelo AlertaRepository).
+    ingrediente_nome          : nome para exibição/histórico do alerta.
+    fracao_atual              : participação atual em 0-1 (não 0-100).
+    limite_max                : limite configurado em 0-1, ou None se o
+                                 ingrediente não tem limite cadastrado.
+    """
+    ingrediente_formulacao_id: int
+    ingrediente_nome: str
+    fracao_atual: float
+    limite_max: float | None
 
 
 class MotorAlertas:
@@ -105,6 +136,66 @@ class MotorAlertas:
                 "valor_atual":         round(resultado.soma_participacoes * 100, 4),
                 "valor_limite":        100.0,
                 "magnitude_relativa":  round(desvio_pp / 100.0, 4),
+            })
+
+        return alertas
+
+    @staticmethod
+    def avaliar_limites_ingredientes(
+        itens: list[ParticipacaoIngredienteLimite],
+        thresholds: ThresholdsSeveridade = _DEFAULTS,
+    ) -> list[dict]:
+        """
+        Retorna um alerta para cada ingrediente cuja participação atual
+        (%MS) ultrapassa o limite_max_participacao configurado no
+        cadastro (ex.: bicarbonato de sódio limitado a 1.5%).
+
+        Ingredientes sem limite configurado (limite_max=None) ou dentro
+        do limite não geram alerta. Nunca bloqueia a formulação — a
+        participação pode ter sido travada manualmente pelo usuário
+        acima do limite; aqui apenas sinalizamos (seção 15).
+
+        Retorna dicts prontos para AlertaRepository.upsert_alertas(),
+        com a mesma estrutura de MotorAlertas.avaliar() acrescida de
+        "ingrediente_formulacao_id" e "ingrediente_nome":
+
+          {
+            "nutriente":                 None,
+            "tipo":                      "LIMITE_INGREDIENTE",
+            "severidade":                "INFO" | "ATENCAO" | "CRITICO",
+            "valor_atual":               float (% MS),
+            "valor_limite":              float (% MS),
+            "magnitude_relativa":        float,
+            "ingrediente_formulacao_id": int,
+            "ingrediente_nome":          str,
+          }
+        """
+        alertas: list[dict] = []
+
+        for item in itens:
+            if item.limite_max is None:
+                continue
+            if item.fracao_atual <= item.limite_max + 1e-9:
+                continue
+
+            if item.limite_max > 0:
+                magnitude = (item.fracao_atual - item.limite_max) / item.limite_max
+            else:
+                # limite configurado como 0%: qualquer participação já é
+                # uma violação total (evita divisão por zero).
+                magnitude = 1.0
+
+            severidade = MotorAlertas._severidade_nutricional(magnitude, thresholds)
+
+            alertas.append({
+                "nutriente":                 None,
+                "tipo":                      "LIMITE_INGREDIENTE",
+                "severidade":                severidade,
+                "valor_atual":               round(item.fracao_atual * 100, 4),
+                "valor_limite":              round(item.limite_max * 100, 4),
+                "magnitude_relativa":        round(magnitude, 4),
+                "ingrediente_formulacao_id": item.ingrediente_formulacao_id,
+                "ingrediente_nome":          item.ingrediente_nome,
             })
 
         return alertas

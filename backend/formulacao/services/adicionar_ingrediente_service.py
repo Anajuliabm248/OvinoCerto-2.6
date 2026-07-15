@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from django.db import transaction
 
-from formulacao.engines.motor_adequacao import ConfiguracaoIngrediente, MotorAdequacao
+from formulacao.engines.motor_adequacao import MotorAdequacao
 from formulacao.engines.motor_recalculo import MotorRecalculo
 from formulacao.models import IngredienteFormulacao, OrigemParticipacaoChoices, TipoEvento
 from formulacao.repositories import (
@@ -34,6 +34,7 @@ from formulacao.repositories import (
     ExigenciaRepository,
     IngredienteFormulacaoRepository,
 )
+from formulacao.services._configuracao_ingrediente import configuracao_a_partir_do_ingrediente
 from formulacao.services.recalcular_formulacao_service import RecalcularFormulacaoService
 from ingrediente.models import Ingrediente
 
@@ -98,14 +99,7 @@ class AdicionarIngredienteService:
             .order_by("id")
         )
         configuracoes = [
-            ConfiguracaoIngrediente(
-                classificacao=(
-                    (obj.ingrediente.classificacao if obj.ingrediente else "concentrado")
-                    or "concentrado"
-                ).upper(),
-                limite_min=0.0,
-                limite_max=1.0,
-            )
+            configuracao_a_partir_do_ingrediente(obj.ingrediente)
             for obj in ing_form_qs
         ]
 

@@ -111,6 +111,40 @@ class IngredienteFormulacaoRepository:
                 )
         return vetores
 
+    @staticmethod
+    def get_limites_participacao(formulacao_id: int) -> list[dict]:
+        """
+        Retorna, um item por IngredienteFormulacao (ordenado por id, a
+        MESMA ordem de get_participacao()), os metadados necessários
+        para avaliar o limite máximo de participação:
+
+          [{"ing_form_id": int, "nome": str, "limite_max_fracao": float | None}, ...]
+
+        limite_max_fracao vem de Ingrediente.limite_max_participacao
+        (armazenado em % 0-100) convertido para fração 0-1. É None
+        quando o ingrediente não tem limite configurado, ou quando o
+        ingrediente foi removido do catálogo (SET_NULL).
+        """
+        qs = (
+            IngredienteFormulacao.objects
+            .filter(formulacao_id=formulacao_id)
+            .order_by("id")
+            .select_related("ingrediente")
+        )
+        resultado = []
+        for ing_form in qs:
+            ing = ing_form.ingrediente
+            if ing is None or ing.limite_max_participacao is None:
+                limite_fracao = None
+            else:
+                limite_fracao = ing.limite_max_participacao / 100.0
+            resultado.append({
+                "ing_form_id":       ing_form.id,
+                "nome":              ing.nome if ing else "(removido)",
+                "limite_max_fracao": limite_fracao,
+            })
+        return resultado
+
     
     # Escrita: Domínio → DB
     

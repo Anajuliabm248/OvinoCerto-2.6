@@ -159,9 +159,9 @@ class ExigenciaRepository:
         Todos os nutrientes nascem com alterado_pelo_usuario=False.
 
         Mapeamento NRC → operadores padrão:
-        - PB, NDT, EE, Ca, P : ">=" (mínimo)
-        - FDN                : "<=" (máximo)
-        - CA_P               : "=" com tolerância no domínio
+        - PB, NDT, FDN, Ca, P, CA_P : ">=" (mínimo)
+        - EE                        : "<=" (máximo)
+        - Por default nenhum        : "="  (igual)
 
         Valores NRC estão em percentual (0-100 da MS) — nenhuma
         conversão necessária (ConfiguracaoNutriente também armazena
@@ -175,13 +175,13 @@ class ExigenciaRepository:
 
         # (nutriente_db, operador, valor_min, valor_max, valor_origem_nrc)
         configs = [
-            ("PB",  Operador.MAIOR_IGUAL, exigencia_nrc.pb_percentual,  None,                          exigencia_nrc.pb_percentual),
-            ("NDT", Operador.MAIOR_IGUAL, exigencia_nrc.ndt_percentual, None,                          exigencia_nrc.ndt_percentual),
-            ("FDN", Operador.MENOR_IGUAL, None,                         exigencia_nrc.fdn_percentual, exigencia_nrc.fdn_percentual),
-            ("EE",  Operador.MAIOR_IGUAL, exigencia_nrc.ee_percentual,  None,                          exigencia_nrc.ee_percentual),
-            ("CA",  Operador.MAIOR_IGUAL, exigencia_nrc.ca_percentual,  None,                          exigencia_nrc.ca_percentual),
-            ("P",   Operador.MAIOR_IGUAL, exigencia_nrc.p_percentual,   None,                          exigencia_nrc.p_percentual),
-            ("CA_P", Operador.IGUAL,       exigencia_nrc.ca_p_percentual, exigencia_nrc.ca_p_percentual, exigencia_nrc.ca_p_percentual),
+            ("PB",  Operador.MAIOR_IGUAL,  exigencia_nrc.pb_percentual,   None,                          exigencia_nrc.pb_percentual),
+            ("NDT", Operador.MAIOR_IGUAL,  exigencia_nrc.ndt_percentual,  None,                          exigencia_nrc.ndt_percentual),
+            ("FDN", Operador.MAIOR_IGUAL,  exigencia_nrc.fdn_percentual,  None,                          exigencia_nrc.fdn_percentual),
+            ("EE",  Operador.MENOR_IGUAL,  None,                          exigencia_nrc.ee_percentual,   exigencia_nrc.ee_percentual),
+            ("CA",  Operador.MAIOR_IGUAL,  exigencia_nrc.ca_percentual,   None,                          exigencia_nrc.ca_percentual),
+            ("P",   Operador.MAIOR_IGUAL,  exigencia_nrc.p_percentual,    None,                          exigencia_nrc.p_percentual),
+            ("CA_P", Operador.MAIOR_IGUAL, exigencia_nrc.ca_p_percentual, None,                          exigencia_nrc.ca_p_percentual),
         ]
 
         ConfiguracaoNutriente.objects.bulk_create([

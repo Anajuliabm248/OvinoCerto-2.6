@@ -31,19 +31,24 @@ def upsert_alertas(
 ) -> None:
     """
     novos: lista de dicts com as chaves:
-      - nutriente       : str | None  (None para tipo SOMA)
-      - tipo            : "DEFICIT" | "EXCESSO" | "SOMA"
+      - nutriente       : str | None  (None para tipo SOMA ou LIMITE_INGREDIENTE)
+      - tipo            : "DEFICIT" | "EXCESSO" | "SOMA" | "LIMITE_INGREDIENTE"
       - severidade      : "INFO" | "ATENCAO" | "CRITICO"
       - valor_atual     : float
       - valor_limite    : float
       - magnitude_relativa : float
+      - ingrediente_formulacao_id : int | None (apenas para LIMITE_INGREDIENTE)
+      - ingrediente_nome          : str | None (apenas para LIMITE_INGREDIENTE)
 
     versao_num: versão do snapshot gerado neste mesmo recálculo.
+
+    A chave de identidade de um alerta é (nutriente, tipo,
+    ingrediente_formulacao_id) — necessário porque vários alertas
+    LIMITE_INGREDIENTE podem estar ativos ao mesmo tempo (um por
+    ingrediente), todos com nutriente=None.
     """
-    # Identifica quais (nutriente, tipo) estão ativos no novo resultado
-    chaves_novas: set[tuple] = {
-        (_normalizar(n["nutriente"]), n["tipo"]) for n in novos
-    }
+    # Identifica quais chaves estão ativas no novo resultado
+    chaves_novas: set[tuple] = {_chave_dict(n) for n in novos}
 
     
     # Passo 1: resolver alertas que não aparecem mais
@@ -55,7 +60,7 @@ def upsert_alertas(
     para_resolver = []
     agora = timezone.now()
     for alerta in ativos:
-        chave = (_normalizar(alerta.nutriente), alerta.tipo)
+        chave = _chave_obj(alerta)
         if chave not in chaves_novas:
             alerta.resolvido = True
             alerta.snapshot_versao_resolucao = versao_num
@@ -74,7 +79,7 @@ def upsert_alertas(
     # versão de geração original, mas atualizamos severidade e valores.
     
     ativos_por_chave = {
-        (_normalizar(alerta.nutriente), alerta.tipo): alerta
+        _chave_obj(alerta): alerta
         for alerta in Alerta.objects.select_for_update().filter(
             formulacao_id=formulacao_id,
             resolvido=False,
@@ -84,7 +89,7 @@ def upsert_alertas(
     para_atualizar = []
     para_criar = []
     for n in novos:
-        chave = (_normalizar(n["nutriente"]), n["tipo"])
+        chave = _chave_dict(n)
         alerta_ativo = ativos_por_chave.get(chave)
 
         if alerta_ativo:
@@ -92,6 +97,7 @@ def upsert_alertas(
             alerta_ativo.valor_atual = n["valor_atual"]
             alerta_ativo.valor_limite = n["valor_limite"]
             alerta_ativo.magnitude_relativa = n["magnitude_relativa"]
+            alerta_ativo.ingrediente_nome = n.get("ingrediente_nome")
             para_atualizar.append(alerta_ativo)
         else:
             para_criar.append(
@@ -103,6 +109,8 @@ def upsert_alertas(
                     valor_atual=n["valor_atual"],
                     valor_limite=n["valor_limite"],
                     magnitude_relativa=n["magnitude_relativa"],
+                    ingrediente_formulacao_id=n.get("ingrediente_formulacao_id"),
+                    ingrediente_nome=n.get("ingrediente_nome"),
                     snapshot_versao_geracao=versao_num,
                     resolvido=False,
                 )
@@ -116,6 +124,7 @@ def upsert_alertas(
                 "valor_atual",
                 "valor_limite",
                 "magnitude_relativa",
+                "ingrediente_nome",
             ],
         )
 
@@ -126,6 +135,24 @@ def upsert_alertas(
 def _normalizar(valor: str | None) -> str:
     """Normaliza nutriente para chave de comparação (None → "")."""
     return valor or ""
+
+
+def _chave_dict(n: dict) -> tuple:
+    """Chave de identidade de um alerta a partir de um dict (vindo do MotorAlertas)."""
+    return (
+        _normalizar(n["nutriente"]),
+        n["tipo"],
+        n.get("ingrediente_formulacao_id") or 0,
+    )
+
+
+def _chave_obj(alerta: Alerta) -> tuple:
+    """Chave de identidade de um alerta a partir de uma instância persistida."""
+    return (
+        _normalizar(alerta.nutriente),
+        alerta.tipo,
+        alerta.ingrediente_formulacao_id or 0,
+    )
 
 
 class AlertaRepository:

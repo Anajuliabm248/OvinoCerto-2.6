@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from django.db import transaction
 
-from formulacao.engines.motor_adequacao import ConfiguracaoIngrediente, MotorAdequacao
+from formulacao.engines.motor_adequacao import MotorAdequacao
 from formulacao.engines.motor_recalculo import MotorRecalculo
 from formulacao.models import (
     ExigenciaConfigurada,
@@ -38,6 +38,7 @@ from formulacao.repositories import (
     ExigenciaRepository,
     IngredienteFormulacaoRepository,
 )
+from formulacao.services._configuracao_ingrediente import configuracao_a_partir_do_ingrediente
 from formulacao.services.recalcular_formulacao_service import RecalcularFormulacaoService
 from ingrediente.models import Ingrediente
 
@@ -97,11 +98,7 @@ class GerarFormulacaoInicialService:
         matriz_M      = MotorRecalculo.montar_matriz(vetores)
         requisitos    = ExigenciaRepository.get_requisitos(formulacao_id)
         configuracoes = [
-            ConfiguracaoIngrediente(
-                classificacao=(ing.classificacao or "concentrado").upper(),
-                limite_min=0.0,
-                limite_max=1.0,
-            )
+            configuracao_a_partir_do_ingrediente(ing)
             for ing in ingredientes
         ]
 

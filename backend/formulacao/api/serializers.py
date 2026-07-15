@@ -90,19 +90,20 @@ class ExigenciaNRCSerializer(serializers.ModelSerializer):
 # ---------------------------------------------------------------------------
 
 class IngredienteDisponivelSerializer(serializers.Serializer):
-    id              = serializers.IntegerField()
-    nome            = serializers.CharField()
-    classificacao   = serializers.CharField()
-    tipo            = serializers.CharField()
-    ms              = serializers.FloatField()
-    pb              = serializers.FloatField()
-    ndt             = serializers.FloatField()
-    fdn             = serializers.FloatField()
-    ee              = serializers.FloatField()
-    ca              = serializers.FloatField()
-    p               = serializers.FloatField()
-    custo_kg        = serializers.FloatField()
-    fonte_valadares = serializers.BooleanField()
+    id                       = serializers.IntegerField()
+    nome                     = serializers.CharField()
+    classificacao            = serializers.CharField()
+    tipo                     = serializers.CharField()
+    ms                       = serializers.FloatField()
+    pb                       = serializers.FloatField()
+    ndt                      = serializers.FloatField()
+    fdn                      = serializers.FloatField()
+    ee                       = serializers.FloatField()
+    ca                       = serializers.FloatField()
+    p                        = serializers.FloatField()
+    custo_kg                 = serializers.FloatField()
+    limite_max_participacao  = serializers.FloatField(allow_null=True)
+    fonte_valadares          = serializers.BooleanField()
 
 
 # ---------------------------------------------------------------------------
@@ -145,13 +146,6 @@ class IniciarFormulacaoInputSerializer(serializers.Serializer):
 # ---------------------------------------------------------------------------
 
 class GerarFormulacaoInicialInputSerializer(serializers.Serializer):
-    ingrediente_ids = serializers.PrimaryKeyRelatedField(
-        many=True,
-        queryset=Ingrediente.objects.none(),
-        label="Ingredientes",
-        help_text="Segure Ctrl/Cmd para selecionar vários.",
-        style={"base_template": "select_multiple.html"},
-    )
     percentual_alvo_volumoso = serializers.FloatField(
         required=False,
         default=0.50,
@@ -161,11 +155,18 @@ class GerarFormulacaoInicialInputSerializer(serializers.Serializer):
         help_text="Fração-alvo de volumosos na distribuição heurística. Padrão 0.50.",
         style={"base_template": "input.html"},
     )
+    ingrediente_ids = serializers.PrimaryKeyRelatedField(
+        many=True,
+        queryset=Ingrediente.objects.none(),
+        required=False,
+        label="Ingredientes",
+        help_text="Selecione os ingredientes para gerar a formulação inicial.",
+        style={"base_template": "select_multiple.html"},
+    )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields["ingrediente_ids"].queryset = _ingredientes_do_usuario(self.context)
-
 
 # ---------------------------------------------------------------------------
 # Exigência configurada
@@ -219,16 +220,21 @@ class IngredienteFormulacaoSerializer(serializers.ModelSerializer):
     ingrediente_nome          = serializers.CharField(source="ingrediente.nome",          read_only=True)
     ingrediente_classificacao = serializers.CharField(source="ingrediente.classificacao", read_only=True)
     ingrediente_tipo          = serializers.CharField(source="ingrediente.tipo",          read_only=True)
+    ingrediente_limite_max_participacao = serializers.FloatField(
+        source="ingrediente.limite_max_participacao", read_only=True, allow_null=True,
+    )
 
     class Meta:
         model  = IngredienteFormulacao
         fields = [
             "id", "ingrediente", "ingrediente_nome", "ingrediente_classificacao",
-            "ingrediente_tipo", "ms_porcent", "origem_participacao",
+            "ingrediente_tipo", "ingrediente_limite_max_participacao",
+            "ms_porcent", "origem_participacao",
             "ms_kg", "mn_kg", "pb_kg", "ndt_kg", "fdn_kg", "ee_kg", "ca_kg", "p_kg",
         ]
         read_only_fields = [
             "id", "ingrediente_nome", "ingrediente_classificacao", "ingrediente_tipo",
+            "ingrediente_limite_max_participacao",
             "ms_kg", "mn_kg", "pb_kg", "ndt_kg", "fdn_kg", "ee_kg", "ca_kg", "p_kg",
         ]
 
@@ -365,6 +371,7 @@ class AlertaSerializer(serializers.ModelSerializer):
         fields = [
             "id", "nutriente", "tipo", "severidade",
             "valor_atual", "valor_limite", "magnitude_relativa",
+            "ingrediente_formulacao", "ingrediente_nome",
             "snapshot_versao_geracao", "snapshot_versao_resolucao",
             "resolvido", "dt_geracao", "dt_resolucao",
         ]

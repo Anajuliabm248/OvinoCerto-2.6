@@ -1,5 +1,6 @@
 """serializers de ingredientes"""
 
+from django.db.models import OrderBy
 from rest_framework import serializers
 from .models import Ingrediente
 
@@ -37,6 +38,7 @@ class IngredienteSerializer(serializers.ModelSerializer):
             'ca',
             'p',
             'custo_kg',
+            'limite_max_participacao',
             'fonte_valadares',
             'dt_cadastro',
             'dt_atualizacao',
@@ -48,6 +50,24 @@ class IngredienteSerializer(serializers.ModelSerializer):
             'dt_cadastro',
             'dt_atualizacao',
         ]
+        extra_kwargs = {
+            'limite_max_participacao': {
+                'help_text': (
+                    'Percentual máximo (0-100) que este ingrediente pode representar '
+                    'na matéria seca total da formulação. Deixe em branco para não '
+                    'aplicar limite (ex.: bicarbonato de sódio costuma ser limitado a '
+                    'cerca de 1.5%).'
+                ),
+            },
+        }
+
+    def validate_limite_max_participacao(self, value):
+        '''Quando informado, o limite deve ser um percentual válido (0 exclusive-100].'''
+        if value is not None and not (0.0 < value <= 100.0):
+            raise serializers.ValidationError(
+                'O limite máximo de participação deve estar entre 0 (exclusive) e 100%.'
+            )
+        return value
 
     def validate(self, attrs):
         '''Ingredientes Valadares não podem ser editados via API'''

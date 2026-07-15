@@ -6,6 +6,7 @@ from django.db import models
 from formulacao.domain.nutrientes import Nutriente
 
 from .formulacao import Formulacao
+from .ingrediente_formulacao import IngredienteFormulacao
 
 # pylint: disable= no-member, too-few-public-methods
 
@@ -18,6 +19,7 @@ class TipoAlerta(models.TextChoices):
     DEFICIT = "DEFICIT", "Déficit"
     EXCESSO = "EXCESSO", "Excesso"
     SOMA    = "SOMA",    "Soma de participações fora de 100%"
+    LIMITE_INGREDIENTE = "LIMITE_INGREDIENTE", "Limite de participação do ingrediente excedido"
 
 
 class SeveridadeAlerta(models.TextChoices):
@@ -44,6 +46,14 @@ class Alerta(models.Model):
     dois alertas ativos do mesmo tipo para o mesmo nutriente.
     Ao recalcular, alertas não repetidos são marcados resolvido=True;
     novos são inseridos.
+
+    Alertas do tipo LIMITE_INGREDIENTE não são identificados por
+    nutriente, e sim por `ingrediente_formulacao` (a unicidade nesse
+    caso é (formulacao, tipo, ingrediente_formulacao)). São gerados
+    quando a participação (%MS) de um ingrediente ultrapassa o
+    `limite_max_participacao` configurado no seu cadastro — nunca
+    bloqueiam a formulação, apenas sinalizam (mesma filosofia dos
+    alertas nutricionais).
     """
 
     formulacao = models.ForeignKey(
@@ -58,13 +68,36 @@ class Alerta(models.Model):
         null=True,
         blank=True,
         verbose_name="Nutriente",
-        help_text="Null para alertas de tipo SOMA (não associados a nutriente específico).",
+        help_text="Null para alertas de tipo SOMA ou LIMITE_INGREDIENTE (não associados a nutriente específico).",
         db_index=True,
     )
     tipo = models.CharField(
-        max_length=10,
+        max_length=25,
         choices=TipoAlerta.choices,
         verbose_name="Tipo",
+    )
+    ingrediente_formulacao = models.ForeignKey(
+        IngredienteFormulacao,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="alertas_limite",
+        verbose_name="Ingrediente na formulação",
+        help_text=(
+            "Preenchido apenas para alertas do tipo LIMITE_INGREDIENTE: "
+            "identifica qual ingrediente ultrapassou o limite de participação."
+        ),
+        db_index=True,
+    )
+    ingrediente_nome = models.CharField(
+        max_length=200,
+        null=True,
+        blank=True,
+        verbose_name="Nome do ingrediente (histórico)",
+        help_text=(
+            "Cópia do nome do ingrediente no momento da geração do alerta — "
+            "preserva a informação mesmo se o ingrediente for removido da formulação."
+        ),
     )
     severidade = models.CharField(
         max_length=10,
@@ -112,9 +145,13 @@ class Alerta(models.Model):
             models.Index(fields=["formulacao", "resolvido"]),
             models.Index(fields=["formulacao", "nutriente", "tipo"]),
             models.Index(fields=["formulacao", "severidade", "resolvido"]),
+            models.Index(fields=["formulacao", "tipo", "ingrediente_formulacao"]),
         ]
 
     def __str__(self):
-        nut = self.nutriente or "SOMA"
+        if self.tipo == TipoAlerta.LIMITE_INGREDIENTE:
+            referencia = self.ingrediente_nome or "(ingrediente removido)"
+        else:
+            referencia = self.nutriente or "SOMA"
         status = "✓" if self.resolvido else "!"
-        return f"[{status}] {self.severidade} — {nut} {self.tipo} (formulação {self.formulacao_id})"
+        return f"[{status}] {self.severidade} — {referencia} {self.tipo} (formulação {self.formulacao_id})"
