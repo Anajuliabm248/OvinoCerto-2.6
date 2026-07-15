@@ -16,7 +16,7 @@ Ingrediente e ExigenciaNRC devem ter __str__ legível para o formulário
 fazer sentido visualmente.
 """
 
-from django.db.models import Q
+from django.db.models import Case, IntegerField, Q, Value, When
 from rest_framework import serializers
 
 from exigencia_nrc.models import ExigenciaNRC
@@ -54,15 +54,28 @@ def _lotes_do_usuario(context):
 
 def _ingredientes_do_usuario(context):
     req = context.get("request")
+    ordem = Case(
+        When(classificacao="volumoso", then=Value(0)),
+        default=Value(1),
+        output_field=IntegerField(),
+    )
     if not req:
-        return Ingrediente.objects.filter(fonte_valadares=True)
+        return (
+            Ingrediente.objects
+            .filter(fonte_valadares=True)
+            .order_by(ordem, "nome")
+        )
     perfil = _perfil(context)
     if perfil is None:
-        return Ingrediente.objects.filter(fonte_valadares=True)
+        return (
+            Ingrediente.objects
+            .filter(fonte_valadares=True)
+            .order_by(ordem, "nome")
+        )
     return (
         Ingrediente.objects
         .filter(Q(fonte_valadares=True) | Q(usuario=perfil))
-        .order_by("classificacao", "tipo", "nome")
+        .order_by(ordem, "nome")
     )
 
 
