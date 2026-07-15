@@ -147,6 +147,8 @@ class MotorAdequacao:
         requisitos: dict[Nutriente, RequisitoNutriente],
         participacao_atual: ParticipacaoVetor,
         configuracoes: list[ConfiguracaoIngrediente],
+        percentual_alvo_volumoso: float | None = None,
+        reiniciar_livres: bool = False,
     ) -> ResultadoDistribuicao:
         """
         Redistribui participações dos ingredientes CALCULADA quando
@@ -208,10 +210,18 @@ class MotorAdequacao:
         # escalada para o novo espaço livre (princípio de menor mudança)
         fracoes_livres_atuais = participacao_atual.fracoes[indices_livres]
         soma_livres_atual = fracoes_livres_atuais.sum()
-        if soma_livres_atual > 1e-9:
+        alvo_vol = (
+            percentual_alvo_volumoso
+            if percentual_alvo_volumoso is not None
+            else cls.PERCENTUAL_ALVO_VOLUMOSO
+        )
+        if reiniciar_livres:
+            x_alvo_livres = cls._x_alvo_heuristico(cfg_livres, alvo_vol)
+            x_alvo_livres = x_alvo_livres * espaco_livre
+        elif soma_livres_atual > 1e-9:
             x_alvo_livres = fracoes_livres_atuais / soma_livres_atual * espaco_livre
         else:
-            x_alvo_livres = cls._x_alvo_heuristico(cfg_livres, cls.PERCENTUAL_ALVO_VOLUMOSO)
+            x_alvo_livres = cls._x_alvo_heuristico(cfg_livres, alvo_vol)
             x_alvo_livres = x_alvo_livres * espaco_livre
 
         # Bounds dinâmicos: limite de variação máxima por iteração
@@ -219,11 +229,15 @@ class MotorAdequacao:
         for i, idx_global in enumerate(indices_livres):
             cfg = configuracoes[idx_global]
             fracao_atual = participacao_atual.fracoes[idx_global]
-            lo = max(cfg.limite_min, fracao_atual - cls.VARIACAO_MAX_POR_ITERACAO)
-            hi = min(
-                min(cfg.limite_max, espaco_livre),
-                fracao_atual + cls.VARIACAO_MAX_POR_ITERACAO,
-            )
+            if reiniciar_livres:
+                lo = cfg.limite_min
+                hi = min(cfg.limite_max, espaco_livre)
+            else:
+                lo = max(cfg.limite_min, fracao_atual - cls.VARIACAO_MAX_POR_ITERACAO)
+                hi = min(
+                    min(cfg.limite_max, espaco_livre),
+                    fracao_atual + cls.VARIACAO_MAX_POR_ITERACAO,
+                )
             # Garante lo <= hi (pode ocorrer se fracao_atual == 0)
             lo = min(lo, hi)
             bounds_livres.append((lo, hi))

@@ -1,22 +1,18 @@
 """
 Application Service - GerarFormulacaoInicialService.
 
-Segunda etapa do fluxo de criação (seção 6, passos 3-4): usuário já
-revisou/editou as exigências (via AtualizarExigenciaService) e agora
-seleciona os ingredientes. Este service:
+Gera ou regenera a distribuicao de uma formulacao. A fonte principal de
+ingredientes e sempre a lista ja vinculada a formulacao; `ingrediente_ids`
+existe apenas como compatibilidade para formulacoes ainda vazias.
 
-  1. Cria IngredienteFormulacao para cada ingrediente (ms_porcent=0, CALCULADA).
-  2. Chama MotorAdequacao.gerar_distribuicao_inicial() (SciPy SLSQP).
-  3. Aplica as frações resultantes.
-  4. Dispara RecalcularFormulacaoService → snapshot v1.
-  5. Promove a formulação para status ATIVA.
-
-Pré-condição: a formulação já deve ter ExigenciaConfigurada
-(criada por IniciarFormulacaoService). Caso contrário, levanta erro.
-
-Só pode ser chamado uma vez por formulação em estado RASCUNHO —
-chamadas subsequentes de adição/remoção de ingrediente usam
-AdicionarIngredienteService / RemoverIngredienteService.
+Fluxo:
+  1. Se a formulacao ainda nao tem ingredientes, cria os vinculos enviados
+     em `ingrediente_ids` com ms_porcent=0 e origem CALCULADA.
+  2. Recarrega as participacoes atuais.
+  3. Redistribui os ingredientes CALCULADA do zero, respeitando os
+     MANUAL_TRAVADA e o percentual-alvo de volumoso.
+  4. Recalcula nutrientes, alertas e snapshot.
+  5. Promove a formulacao para ATIVA.
 """
 
 from __future__ import annotations
@@ -53,82 +49,66 @@ class GerarFormulacaoInicialService:
         usuario_id: int | None = None,
         percentual_alvo_volumoso: float = 0.50,
     ) -> Formulacao:
-        if not ingrediente_ids:
-            raise ValueError("Selecione ao menos um ingrediente.")
-
         formulacao = Formulacao.objects.get(pk=formulacao_id)
 
         if not ExigenciaConfigurada.objects.filter(formulacao_id=formulacao_id).exists():
             raise ValueError(
-                f"Formulação {formulacao_id} não possui ExigenciaConfigurada. "
+                f"Formulacao {formulacao_id} nao possui ExigenciaConfigurada. "
                 "Chame IniciarFormulacaoService primeiro."
             )
 
-        if IngredienteFormulacao.objects.filter(formulacao_id=formulacao_id).exists():
-            raise ValueError(
-                f"Formulação {formulacao_id} já possui ingredientes. "
-                "Use AdicionarIngredienteService para incluir novos."
-            )
+        usou_ingredientes_existentes = IngredienteFormulacao.objects.filter(
+            formulacao_id=formulacao_id
+        ).exists()
 
-        ingredientes = list(Ingrediente.objects.filter(pk__in=ingrediente_ids))
-        if len(ingredientes) != len(ingrediente_ids):
-            faltando = set(ingrediente_ids) - {i.pk for i in ingredientes}
-            raise ValueError(f"Ingredientes não encontrados: {faltando}")
-
-        ordem = {id_: pos for pos, id_ in enumerate(ingrediente_ids)}
-        ingredientes.sort(key=lambda i: ordem[i.pk])
-
-        # ------------------------------------------------------------------
-        # Criar IngredienteFormulacao (ms_porcent=0, CALCULADA)
-        # ------------------------------------------------------------------
-        IngredienteFormulacao.objects.bulk_create([
-            IngredienteFormulacao(
+        if not usou_ingredientes_existentes:
+            GerarFormulacaoInicialService._criar_ingredientes_iniciais(
                 formulacao=formulacao,
-                ingrediente=ing,
-                ms_porcent=0.0,
-                origem_participacao=OrigemParticipacaoChoices.CALCULADA,
+                ingrediente_ids=ingrediente_ids,
             )
-            for ing in ingredientes
-        ])
 
-        # ------------------------------------------------------------------
-        # Geração inicial via MotorAdequacao
-        # ------------------------------------------------------------------
-        vetores       = IngredienteFormulacaoRepository.get_vetores_nutricionais(formulacao_id)
-        matriz_M      = MotorRecalculo.montar_matriz(vetores)
-        requisitos    = ExigenciaRepository.get_requisitos(formulacao_id)
-        configuracoes = [
-            configuracao_a_partir_do_ingrediente(ing)
-            for ing in ingredientes
-        ]
+        participacao = IngredienteFormulacaoRepository.get_participacao(formulacao_id)
+        vetores = IngredienteFormulacaoRepository.get_vetores_nutricionais(formulacao_id)
+        requisitos = ExigenciaRepository.get_requisitos(formulacao_id)
 
-        resultado_dist = MotorAdequacao.gerar_distribuicao_inicial(
-            matriz_M=matriz_M,
-            requisitos=requisitos,
-            configuracoes=configuracoes,
-            percentual_alvo_volumoso=percentual_alvo_volumoso,
-        )
+        if not requisitos:
+            raise ValueError(f"Formulacao {formulacao_id} nao possui ExigenciaConfigurada.")
 
-        # ------------------------------------------------------------------
-        # Aplicar frações
-        # ------------------------------------------------------------------
-        qs_ing_form = list(
+        ing_form_qs = list(
             IngredienteFormulacao.objects
             .filter(formulacao_id=formulacao_id)
+            .select_related("ingrediente")
             .order_by("id")
         )
-        for pos, obj in enumerate(qs_ing_form):
-            obj.ms_porcent = float(resultado_dist.fracoes[pos]) * 100.0
+        if not ing_form_qs:
+            raise ValueError("Selecione ao menos um ingrediente.")
 
-        IngredienteFormulacao.objects.bulk_update(qs_ing_form, fields=["ms_porcent"])
+        matriz_M = MotorRecalculo.montar_matriz(vetores)
+        configuracoes = [
+            configuracao_a_partir_do_ingrediente(obj.ingrediente)
+            for obj in ing_form_qs
+        ]
 
-        # ------------------------------------------------------------------
-        # Recálculo completo + snapshot v1
-        # ------------------------------------------------------------------
+        resultado_dist = MotorAdequacao.redistribuir(
+            matriz_M=matriz_M,
+            requisitos=requisitos,
+            participacao_atual=participacao,
+            configuracoes=configuracoes,
+            percentual_alvo_volumoso=percentual_alvo_volumoso,
+            reiniciar_livres=True,
+        )
+
+        for pos, ing_form_id in enumerate(participacao.ids_ingredientes):
+            IngredienteFormulacaoRepository.atualizar_participacao(
+                ing_form_id=ing_form_id,
+                fracao=float(resultado_dist.fracoes[pos]),
+                origem=participacao.origens[pos],
+            )
+
         motivo = (
-            "geração inicial"
+            "geracao inicial"
             if resultado_dist.convergiu
-            else f"geração inicial (fallback: {resultado_dist.mensagem})"
+            else f"geracao inicial (fallback: {resultado_dist.mensagem})"
         )
         RecalcularFormulacaoService.executar(
             formulacao_id=formulacao_id,
@@ -140,10 +120,11 @@ class GerarFormulacaoInicialService:
             formulacao_id=formulacao_id,
             tipo_evento=TipoEvento.CRIACAO,
             payload={
-                "n_ingredientes":       len(ingredientes),
-                "convergiu":            resultado_dist.convergiu,
-                "mensagem_solver":      resultado_dist.mensagem,
-                "percentual_alvo_vol":  percentual_alvo_volumoso,
+                "n_ingredientes": len(ing_form_qs),
+                "convergiu": resultado_dist.convergiu,
+                "mensagem_solver": resultado_dist.mensagem,
+                "percentual_alvo_vol": percentual_alvo_volumoso,
+                "usou_ingredientes_existentes": usou_ingredientes_existentes,
             },
             usuario_id=usuario_id,
         )
@@ -152,3 +133,29 @@ class GerarFormulacaoInicialService:
         formulacao.save(update_fields=["status"])
 
         return formulacao
+
+    @staticmethod
+    def _criar_ingredientes_iniciais(
+        formulacao: Formulacao,
+        ingrediente_ids: list[int],
+    ) -> None:
+        if not ingrediente_ids:
+            raise ValueError("Selecione ao menos um ingrediente.")
+
+        ingredientes = list(Ingrediente.objects.filter(pk__in=ingrediente_ids))
+        if len(ingredientes) != len(ingrediente_ids):
+            faltando = set(ingrediente_ids) - {i.pk for i in ingredientes}
+            raise ValueError(f"Ingredientes nao encontrados: {faltando}")
+
+        ordem = {id_: pos for pos, id_ in enumerate(ingrediente_ids)}
+        ingredientes.sort(key=lambda ingrediente: ordem[ingrediente.pk])
+
+        IngredienteFormulacao.objects.bulk_create([
+            IngredienteFormulacao(
+                formulacao=formulacao,
+                ingrediente=ingrediente,
+                ms_porcent=0.0,
+                origem_participacao=OrigemParticipacaoChoices.CALCULADA,
+            )
+            for ingrediente in ingredientes
+        ])

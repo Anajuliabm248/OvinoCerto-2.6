@@ -262,60 +262,27 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
     def gerar(self, request, pk=None):
         """
         POST /formulacoes/{id}/gerar/
-        ajusta o percentual-alvo de volumosos se necessário.
+        Recalcula a distribuicao usando os ingredientes ja adicionados.
+        `ingrediente_ids` so e usado quando a formulacao ainda esta vazia.
         """
         formulacao = self.get_object()
 
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        percentual_alvo_volumoso = serializer.validated_data[
-            "percentual_alvo_volumoso"
-        ]
-
-        ingredientes_formulacao = list(
-            formulacao.ingredientes_formulacao.select_related("ingrediente")
-        )
-
         ingrediente_ids = [
             ing.pk for ing in serializer.validated_data.get("ingrediente_ids", [])
         ]
-
-        if not ingredientes_formulacao and not ingrediente_ids:
-            return Response(
-                {
-                    "detail": (
-                        "Selecione ingredientes para gerar a formulação inicial. "
-                        "Envie a lista de ingredientes no campo ingrediente_ids."
-                    )
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        if ingredientes_formulacao and ingrediente_ids:
-            return Response(
-                {
-                    "detail": (
-                        "A formulação já possui ingredientes. Use adicionar ingrediente ou ajuste de participação "
-                        "em vez de enviar ingrediente_ids novamente."
-                    )
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
 
         try:
             perfil = self._perfil(request)
             formulacao = GerarFormulacaoInicialService.executar(
                 formulacao_id=formulacao.pk,
-                ingrediente_ids=(
-                    ingrediente_ids
-                    if ingrediente_ids
-                    else [
-                        ing_form.ingrediente_id for ing_form in ingredientes_formulacao
-                    ]
-                ),
+                ingrediente_ids=ingrediente_ids,
                 usuario_id=perfil.id if perfil else None,
-                percentual_alvo_volumoso=percentual_alvo_volumoso,
+                percentual_alvo_volumoso=serializer.validated_data[
+                    "percentual_alvo_volumoso"
+                ],
             )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -323,7 +290,7 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
         return Response(FormulacaoDetailSerializer(formulacao).data, status=status.HTTP_200_OK)
 
     # ------------------------------------------------------------------
-    # Exigência configurada
+    # Exigencia configurada
     # ------------------------------------------------------------------
 
     @action(detail=True, methods=["get"], url_path="exigencia")
