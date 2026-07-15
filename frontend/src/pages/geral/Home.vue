@@ -3,25 +3,20 @@
     <Header />
 
     <div class="home-page">
-
-    <div class="cards-grid">
-
-      <a
-        v-for="item in menuItems"
-        :key="item.label"
-        :href="item.href"
-        class="dashboard-card"
-        :class="{ 'card-dark': item.dark }"
-      >
-        <span class="card-label">
-          {{ item.label }}
-        </span>
-      </a>
-
+      <div class="cards-grid">
+        <router-link
+          v-for="item in menuItems"
+          :key="item.label"
+          :to="item.to"
+          class="dashboard-card"
+          :class="{ 'card-dark': item.dark }"
+        >
+          <span class="card-label">
+            {{ item.label }}
+          </span>
+        </router-link>
+      </div>
     </div>
-
-  </div>
-
   </div>
 </template>
 
@@ -29,12 +24,12 @@
 import Header from '@/components/Header.vue'
 
 const menuItems = [
-  { label: 'Propriedades',            href: '#', dark: false },
-  { label: 'Ovinos',                  href: '#', dark: false },
-  { label: 'Ingredientes',            href: '#', dark: false },
-  { label: 'Exigências Nutricionais', href: '#', dark: false },
-  { label: 'Formulações',             href: '#', dark: false },
-  { label: 'Manual',                  href: '#', dark: true  },
+  { label: 'Propriedades', to: '/propriedades', dark: false },
+  { label: 'Ovinos', to: '/ovinos', dark: false },
+  { label: 'Ingredientes', to: '/ingredientes', dark: false },
+  { label: 'Exigências Nutricionais', to: '/formulacoes/exigencias', dark: false },
+  { label: 'Formulações', to: '/formulacoes', dark: false },
+  { label: 'Manual', to: '/frontpage', dark: true },
 ]
 </script>
 

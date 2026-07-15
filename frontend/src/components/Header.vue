@@ -3,7 +3,7 @@
     <div class="header-inner">
 
       <!-- Logo -->
-      <RouterLink to="/" class="logo-container">
+      <RouterLink to="/home" class="logo-container">
         <img
           src="@/assets/logo_branca_2.png"
           alt="OvinoCerto"
@@ -14,7 +14,7 @@
       <!-- Navegação -->
       <nav class="nav">
 
-        <RouterLink to="/" class="nav-item">
+        <RouterLink to="/home" class="nav-item">
           Home
         </RouterLink>
 
@@ -22,9 +22,12 @@
           class="dropdown"
           @mouseenter="dropdownOpen = true"
           @mouseleave="dropdownOpen = false"
+          @mousemove="dropdownOpen = true"
         >
-          <button class="nav-item dropdown-button">
-            Propriedades
+          <button class="nav-item dropdown-button" type="button">
+            <RouterLink to="/propriedades" class="nav-item">
+              Propriedades
+            </RouterLink>
 
             <svg
               class="arrow"
@@ -43,19 +46,16 @@
           <div
             v-if="dropdownOpen"
             class="dropdown-menu"
+            @mouseenter="dropdownOpen = true"
+            @mouseleave="dropdownOpen = false"
           >
-            <RouterLink
-              to="/propriedades"
-              class="dropdown-item"
-            >
-              Ver Propriedades
-            </RouterLink>
 
             <RouterLink
-              to="/propriedades/nova"
+              to="/propriedades/ovinos"
               class="dropdown-item"
+              @click="dropdownOpen = false"
             >
-              Nova Propriedade
+              Ovinos / Lotes
             </RouterLink>
           </div>
         </div>
@@ -75,7 +75,7 @@
         </RouterLink>
 
         <RouterLink
-          to="/formulacoes"
+          to="/formulacoes/ingredientes"
           class="nav-item"
         >
           Formulações
@@ -210,6 +210,8 @@ function logout() {
 
 .dropdown {
   position: relative;
+  padding-bottom: 12px;
+  margin-bottom: -12px;
 }
 
 .dropdown-button {
@@ -235,38 +237,38 @@ function logout() {
 
 .dropdown-menu {
   position: absolute;
+  top: 32px;
+  left: 50%;
+  transform: translateX(-50%);
 
-  top: calc(100% + 10px);
-  left: 0;
+  min-width: 168px;
+  padding: 6px;
 
-  min-width: 180px;
+  background: #5f7317;
 
-  background: white;
-
-  border-radius: 8px;
+  border-radius: 14px;
 
   overflow: hidden;
-
-  box-shadow:
-    0 10px 30px rgba(0,0,0,.15);
-
   z-index: 100;
 }
 
 .dropdown-item {
-  display: block;
-
-  padding: 12px 16px;
-
-  color: #333;
-
-  font-size: 14px;
-
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 12px;
+  color: white;
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: .04em;
   text-decoration: none;
+  border-radius: 10px;
+  transition: background-color .2s ease, color .2s ease;
 }
 
 .dropdown-item:hover {
-  background: #f5f5f5;
+  background: var(--primary-dark);
+  color: white;
 }
 
 /* ======================
