@@ -1921,14 +1921,6 @@ components:
         tipo_parto_display:
           type: string
           readOnly: true
-        dias_fase:
-          type: integer
-          maximum: 9223372036854775807
-          minimum: 0
-          format: int64
-          nullable: true
-          title: Dias na fase
-          description: Dias dentro da fase (gestação/lactação).
         pv_nascer_kg:
           type: number
           format: double
@@ -2312,14 +2304,6 @@ components:
           oneOf:
           - $ref: '#/components/schemas/TipoPartoEnum'
           - $ref: '#/components/schemas/NullEnum'
-        dias_fase:
-          type: integer
-          maximum: 9223372036854775807
-          minimum: 0
-          format: int64
-          nullable: true
-          title: Dias na fase
-          description: Número de dias na fase atual (requerido para gestação e lactação).
         peso_vivo:
           type: number
           format: double
@@ -2542,14 +2526,6 @@ components:
         tipo_parto_display:
           type: string
           readOnly: true
-        dias_fase:
-          type: integer
-          maximum: 9223372036854775807
-          minimum: 0
-          format: int64
-          nullable: true
-          title: Dias na fase
-          description: Dias dentro da fase (gestação/lactação).
         pv_nascer_kg:
           type: number
           format: double
@@ -2806,14 +2782,6 @@ components:
           oneOf:
           - $ref: '#/components/schemas/TipoPartoEnum'
           - $ref: '#/components/schemas/NullEnum'
-        dias_fase:
-          type: integer
-          maximum: 9223372036854775807
-          minimum: 0
-          format: int64
-          nullable: true
-          title: Dias na fase
-          description: Número de dias na fase atual (requerido para gestação e lactação).
         peso_vivo:
           type: number
           format: double
@@ -2857,10 +2825,6 @@ components:
         nome:
           type: string
           maxLength: 255
-        cnpj:
-          type: string
-          nullable: true
-          maxLength: 20
         proprietario:
           type: string
           maxLength: 255
@@ -2949,10 +2913,6 @@ components:
         nome:
           type: string
           maxLength: 255
-        cnpj:
-          type: string
-          nullable: true
-          maxLength: 20
         proprietario:
           type: string
           maxLength: 255

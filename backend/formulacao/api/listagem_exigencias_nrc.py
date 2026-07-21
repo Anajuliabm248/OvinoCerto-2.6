@@ -41,8 +41,6 @@ def listar_sugeridas(lote: Lote):
     if lote.fase in FASES_COM_PARTO_E_DIAS:
         if lote.tipo_parto and qs.filter(tipo_parto=lote.tipo_parto).exists():
             qs = qs.filter(tipo_parto=lote.tipo_parto)
-        if lote.dias_fase and qs.filter(dias_fase=lote.dias_fase).exists():
-            qs = qs.filter(dias_fase=lote.dias_fase)
 
     pv_lote = float(lote.peso_vivo) if lote.peso_vivo is not None else 0.0
     qs = qs.annotate(

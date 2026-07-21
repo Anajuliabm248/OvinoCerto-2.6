@@ -91,7 +91,7 @@ class ExigenciaNRCSerializer(serializers.ModelSerializer):
         model = ExigenciaNRC
         fields = [
             "id", "categoria", "categoria_display", "fase", "fase_display",
-            "pv_kg", "tipo_parto", "dias_fase", "gmd_kg", "cms_kg",
+            "pv_kg", "tipo_parto", "gmd_kg", "cms_kg",
             "pb_percentual", "ndt_percentual", "fdn_percentual",
             "ee_percentual", "ca_percentual", "p_percentual", "ca_p_percentual",
         ]

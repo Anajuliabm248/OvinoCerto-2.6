@@ -34,11 +34,6 @@ class ExigenciaNRC(models.Model):
         verbose_name='Tipo de parto',
         help_text='Requerido para fases de gestação e lactação.',
     )
-    dias_fase = models.PositiveIntegerField(
-        blank=True, null=True,
-        verbose_name='Dias na fase',
-        help_text='Dias dentro da fase (gestação/lactação).',
-    )
     pv_nascer_kg = models.FloatField(
         blank=True, null=True,
         verbose_name='PV ao nascer (kg)',

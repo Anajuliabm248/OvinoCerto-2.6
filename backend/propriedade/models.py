@@ -14,7 +14,6 @@ class Propriedade(models.Model):
         related_name='propriedades',
     )
     nome = models.CharField(max_length=255)
-    cnpj = models.CharField(max_length=20, unique=True, blank=True, null=True)
     proprietario = models.CharField(max_length=255)
     telefone = models.CharField(max_length=20, blank=True, null=True)
     uf = models.CharField(max_length=2)

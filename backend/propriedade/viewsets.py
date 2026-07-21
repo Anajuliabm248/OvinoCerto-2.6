@@ -14,7 +14,7 @@ class PropriedadeViewSet(viewsets.ModelViewSet):
     '''
     ViewSet para o modelo Propriedade
     - GET  /api/propriedades/            → lista todas as propriedades do usuário logado
-    - GET  /api/propriedades/?search=    → busca por nome, cnpj, proprietário, 
+    - GET  /api/propriedades/?search=    → busca por nome, proprietário, 
                                             uf, cidade ou localidade
     - POST /api/propriedades/            → cria uma nova propriedade 
                                             (associada ao usuário logado)
@@ -40,7 +40,6 @@ class PropriedadeViewSet(viewsets.ModelViewSet):
         if search:
             queryset = queryset.filter(
                 Q(nome__icontains=search)
-                | Q(cnpj__icontains=search)
                 | Q(proprietario__icontains=search)
                 | Q(uf__icontains=search)
                 | Q(cidade__icontains=search)

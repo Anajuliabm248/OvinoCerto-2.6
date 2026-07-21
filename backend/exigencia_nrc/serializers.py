@@ -29,7 +29,6 @@ class ExigenciaNRCSerializer(serializers.ModelSerializer):
             'pv_kg',
             'tipo_parto',
             'tipo_parto_display',
-            'dias_fase',
             'pv_nascer_kg',
             'producao_leite_kg_dia',
             'gmd_kg',

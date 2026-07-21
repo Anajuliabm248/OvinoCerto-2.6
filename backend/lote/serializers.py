@@ -38,7 +38,6 @@ class LoteSerializer(serializers.ModelSerializer):
             'categoria',
             'fase',
             'tipo_parto',
-            'dias_fase',
             'peso_vivo',
             'gmd_esperado',
             'num_animais',
@@ -54,7 +53,6 @@ class LoteSerializer(serializers.ModelSerializer):
         categoria = attrs.get('categoria', getattr(instance, 'categoria', None))
         fase = attrs.get('fase', getattr(instance, 'fase', None))
         tipo_parto = attrs.get('tipo_parto', getattr(instance, 'tipo_parto', None))
-        dias_fase = attrs.get('dias_fase', getattr(instance, 'dias_fase', None))
 
         if categoria and fase:
             fases_permitidas = FASES_VALIDAS.get(categoria, [])
@@ -73,12 +71,9 @@ class LoteSerializer(serializers.ModelSerializer):
                 errors['fase'] = 'Fases de gestação e lactação são válidas apenas para ovelhas.'
             if not tipo_parto:
                 errors['tipo_parto'] = 'Informe o tipo de parto para esta fase.'
-            if not dias_fase:
-                errors['dias_fase'] = 'Informe os dias na fase para esta fase.'
             if errors:
                 raise serializers.ValidationError(errors)
         else:
             attrs['tipo_parto'] = None
-            attrs['dias_fase'] = None
 
         return attrs

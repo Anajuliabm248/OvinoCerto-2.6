@@ -17,7 +17,6 @@ class PropriedadeSerializer(serializers.ModelSerializer):
             'usuario',
             'usuario_nome',
             'nome',
-            'cnpj',
             'proprietario',
             'telefone',
             'uf',

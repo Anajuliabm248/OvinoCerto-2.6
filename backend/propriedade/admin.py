@@ -9,4 +9,4 @@ class PropriedadeAdmin(admin.ModelAdmin):
     '''Configurações do admin do app propriedade'''
     list_display  = ('nome', 'usuario', 'uf', 'cidade', 'dt_cadastro',)
     list_filter   = ('uf',)
-    search_fields = ('nome', 'cnpj', 'proprietario', 'cidade',)
+    search_fields = ('nome', 'proprietario', 'cidade',)

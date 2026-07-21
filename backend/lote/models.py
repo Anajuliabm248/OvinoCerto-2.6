@@ -46,7 +46,7 @@ FASES_VALIDAS = {
     ],
 }
 
-# Fases que exigem tipo_parto e dias_fase (apenas ovelhas)
+# Fases que exigem tipo_parto (apenas ovelhas)
 FASES_COM_PARTO_E_DIAS = [
     'gestacao_precoce', 'gestacao_tardia',
     'inicio_lactacao', 'meio_lactacao', 'lactacao_tardia',
@@ -70,11 +70,6 @@ class Lote(models.Model):
         blank=True, null=True,
         verbose_name='Tipo de parto',
         help_text='Requerido para fases de gestação e lactação.',
-    )
-    dias_fase = models.PositiveIntegerField(
-        blank=True, null=True,
-        verbose_name='Dias na fase',
-        help_text='Número de dias na fase atual (requerido para gestação e lactação).',
     )
     peso_vivo = models.FloatField(verbose_name='Peso vivo médio (kg)')
     gmd_esperado = models.FloatField(verbose_name='GMD esperado (kg/dia)')

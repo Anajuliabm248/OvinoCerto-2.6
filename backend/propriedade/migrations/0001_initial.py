@@ -20,7 +20,6 @@ class Migration(migrations.Migration):
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
                 ('nome', models.CharField(max_length=255)),
-                ('cnpj', models.CharField(blank=True, max_length=20, null=True, unique=True)),
                 ('proprietario', models.CharField(max_length=255)),
                 ('telefone', models.CharField(blank=True, max_length=20, null=True)),
                 ('uf', models.CharField(max_length=2)),
