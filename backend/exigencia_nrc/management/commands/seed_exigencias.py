@@ -41,6 +41,21 @@ FASE_MAP = {
     'Lactaçao tardia':   'lactacao_tardia',
 }
 
+TIPO_PARTO_MAP = {
+    '1 Cordeiro':  1,
+    '2 Cordeiro':  2,
+    '2 Cordeiros': 2,
+    '3 Cordeiro':  3,
+    '3 Cordeiros': 3,
+    '4 Cordeiro':  4,
+    '4 Cordeiros': 4,
+    '5 Cordeiro':  5,
+    '5 Cordeiros': 5,
+}
+
+FASES_GESTACAO = {'gestacao_precoce', 'gestacao_tardia'}
+FASES_LACTACAO = {'inicio_lactacao', 'meio_lactacao', 'lactacao_tardia'}
+
 
 def _normalize(s: str) -> str:
     """Normalize string for comparison: lowercase, strip, remove accents, collapse spaces."""
@@ -59,6 +74,11 @@ def _normalize(s: str) -> str:
 # Precompute normalized maps for resilient matching
 NORM_CATEGORIA_MAP = { _normalize(k): v for k, v in CATEGORIA_MAP.items() }
 NORM_FASE_MAP = { _normalize(k): v for k, v in FASE_MAP.items() }
+NORM_TIPO_PARTO_MAP = { _normalize(k): v for k, v in TIPO_PARTO_MAP.items() }
+
+
+def _tipo_parto(val):
+    return NORM_TIPO_PARTO_MAP.get(_normalize(val))
 
 # Colunas do Excel (índices base-0):
 COL_IDX = {
@@ -67,7 +87,7 @@ COL_IDX = {
     'fase':        2,
     'pv_kg':       3,
     'tipo_parto':  4,
-    'pv_nascer':   5,
+    'pv_nascer_ou_leite': 5,
     'gmd_kg':      6,
     'pv_percent':  7,
     'cms_kg':      8,
@@ -103,19 +123,6 @@ def _float(val):
         return None
     try:
         return float(val)
-    except (TypeError, ValueError):
-        return None
-
-
-def _tipo_parto(val):
-    """Converte valor do Excel para inteiro de tipo de parto; retorna None se inválido."""
-    if val is None:
-        return None
-    if isinstance(val, str) and val.strip().startswith('-'):
-        return None
-    try:
-        v = int(float(val))
-        return v if 1 <= v <= 5 else None
     except (TypeError, ValueError):
         return None
 
@@ -239,12 +246,17 @@ class Command(BaseCommand):
                 ignorados += 1
                 continue
 
+            valor_col_compartilhada = _float(row[COL_IDX['pv_nascer_ou_leite']])
+            pv_nascer_kg = valor_col_compartilhada if fase in FASES_GESTACAO else None
+            producao_leite_kg_dia = valor_col_compartilhada if fase in FASES_LACTACAO else None
+
             obj = ExigenciaNRC(
                 categoria            = categoria,
                 fase                 = fase,
                 pv_kg                = pv_kg,
                 tipo_parto           = _tipo_parto(row[COL_IDX['tipo_parto']]),
-                pv_nascer_kg         = _float(row[COL_IDX['pv_nascer']]),
+                pv_nascer_kg         = pv_nascer_kg,
+                producao_leite_kg_dia = producao_leite_kg_dia,
                 gmd_kg               = _float(row[COL_IDX['gmd_kg']]),
                 pv_percentual        = _float(row[COL_IDX['pv_percent']]),
                 cms_kg               = _float(row[COL_IDX['cms_kg']]),

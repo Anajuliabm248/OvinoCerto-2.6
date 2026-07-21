@@ -38,6 +38,8 @@ class LoteSerializer(serializers.ModelSerializer):
             'categoria',
             'fase',
             'tipo_parto',
+            'pv_nascer_kg',
+            'producao_leite_kg_dia',
             'peso_vivo',
             'gmd_esperado',
             'num_animais',
