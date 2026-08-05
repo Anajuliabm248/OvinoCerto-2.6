@@ -1,25 +1,36 @@
 """
 Application Service - RecalcularFormulacaoService.
 
-Orquestra o pipeline completo de recálculo nutricional:
+Orquestra o pipeline completo de recálculo nutricional E econômico:
 
   1. Carrega ParticipacaoVetor e VetorNutricional[] via repositórios
   2. Carrega requisitos (dict[Nutriente, RequisitoNutriente]) e cms_kg
   3. Monta EntradaRecalculo
   4. Executa MotorRecalculo.calcular() → SaidaRecalculo
+  4b. Carrega dados de custo e executa MotorCusto.calcular() → SaidaCusto
   5. Persiste campos *_kg via IngredienteFormulacaoRepository
-  6. Avalia alertas via MotorAlertas
-  7. Constrói payload do snapshot
+  5b. Persiste custo_dia por ingrediente + indicadores-resumo da Formulação
+  6. Avalia alertas via MotorAlertas (nutricionais + limite + custo)
+  7. Constrói payload do snapshot (inclui bloco "custos")
   8. Persiste SnapshotFormulacao via SnapshotRepository
   9. Faz upsert de alertas via AlertaRepository
   10. Registra EventoFormulacao
 
 Todo o passo 5-10 ocorre dentro de transaction.atomic.
-O MotorRecalculo (passo 4) é executado FORA da transação —
-é puro e sem I/O, não precisa de lock.
+MotorRecalculo (passo 4) e MotorCusto (passo 4b) são executados FORA
+da transação — ambos são puros e sem I/O, não precisam de lock.
+
+Custo NÃO influencia adequação nutricional (é um agregado ortogonal,
+seção 2.4/19 do documento de arquitetura) — por isso é calculado em
+paralelo ao MotorRecalculo, não encadeado a ele. Uma falha ao carregar
+dados de custo (ex.: CMS ainda não definido) não deveria impedir o
+recálculo nutricional; por isso 4b é best-effort: se os dados de custo
+não puderem ser montados, a formulação segue sem indicadores de custo
+nesta rodada, sem lançar exceção.
 
 Retorna SaidaRecalculo para que a view possa serializar o resultado
-sem precisar re-consultar o banco.
+sem precisar re-consultar o banco. SaidaCusto vai dentro do payload do
+snapshot — quem precisar dela separadamente usa GET /formulacoes/{id}/custos/.
 """
 
 from __future__ import annotations
@@ -28,6 +39,7 @@ from django.db import transaction
 
 from formulacao.domain.nutrientes import NUTRIENTES_ORDEM
 from formulacao.engines.motor_alertas import MotorAlertas, ParticipacaoIngredienteLimite
+from formulacao.engines.motor_custo import EntradaCusto, MotorCusto, SaidaCusto
 from formulacao.engines.motor_recalculo import EntradaRecalculo, MotorRecalculo, SaidaRecalculo
 from formulacao.models import TipoEvento
 from formulacao.repositories import (
@@ -99,6 +111,31 @@ class RecalcularFormulacaoService:
         saida = MotorRecalculo.calcular(entrada)
 
         
+        # Passo 4b: Executar MotorCusto (puro, fora da transação, best-effort)
+        
+
+        saida_custo: SaidaCusto | None = None
+        try:
+            custos_kg_mn, ms_percentuais = IngredienteFormulacaoRepository.get_dados_custo(
+                formulacao_id
+            )
+            num_animais = IngredienteFormulacaoRepository.get_num_animais(formulacao_id)
+            entrada_custo = EntradaCusto(
+                fracoes_ms=participacao.fracoes,
+                custos_kg_mn=custos_kg_mn,
+                ms_percentuais=ms_percentuais,
+                cms_total_kg=cms_kg,
+                num_animais=num_animais,
+            )
+            saida_custo = MotorCusto.calcular(entrada_custo)
+        except (ValueError, ZeroDivisionError):
+            # Best-effort: ausência de dados de custo não pode impedir
+            # o recálculo nutricional. saida_custo permanece None e os
+            # passos 5b/6/7 tratam isso como "sem indicadores de custo
+            # nesta rodada" em vez de propagar a exceção.
+            saida_custo = None
+
+        
         # Passos 5-10: Persistência (atômica)
         
         with transaction.atomic():
@@ -109,12 +146,23 @@ class RecalcularFormulacaoService:
                 saida=saida,
             )
 
-            # Passo 6: avaliar alertas (nutricionais + limite por ingrediente)
+            # Passo 5b: salvar indicadores de custo, se o MotorCusto rodou
+            if saida_custo is not None:
+                IngredienteFormulacaoRepository.salvar_saida_custo(
+                    formulacao_id=formulacao_id,
+                    ids_ingredientes=participacao.ids_ingredientes,
+                    saida=saida_custo,
+                )
+
+            # Passo 6: avaliar alertas (nutricionais + limite + custo)
             alertas_nutrientes = MotorAlertas.avaliar(saida.resultado)
             alertas_limites = MotorAlertas.avaliar_limites_ingredientes(
                 _montar_itens_limite(participacao, limites_ingredientes)
             )
-            alertas_dicts = alertas_nutrientes + alertas_limites
+            alertas_custo = (
+                MotorAlertas.avaliar_custo(saida_custo) if saida_custo is not None else []
+            )
+            alertas_dicts = alertas_nutrientes + alertas_limites + alertas_custo
 
             # Passo 7: construir payload do snapshot
             versao_anterior = SnapshotRepository.get_versao_atual(formulacao_id)
@@ -126,6 +174,7 @@ class RecalcularFormulacaoService:
                 cms_kg=cms_kg,
                 exigencia_configurada=exigencia_payload,
                 alertas=alertas_dicts,
+                custos=_saida_custo_to_dict(saida_custo),
                 usuario_id=usuario_id,
                 motivo=motivo,
             )
@@ -191,6 +240,24 @@ def _montar_itens_limite(
     return itens
 
 
+def _saida_custo_to_dict(saida_custo: SaidaCusto | None) -> dict | None:
+    """
+    Serializa SaidaCusto para o payload do snapshot. Retorna None
+    quando o MotorCusto não pôde rodar nesta rodada (passo 4b) — o
+    front trata a ausência do bloco "custos" como "indicadores ainda
+    não calculados", não como erro.
+    """
+    if saida_custo is None:
+        return None
+    return {
+        "custo_ms_kg":               round(saida_custo.custo_ms_kg, 4),
+        "custo_mn_kg":               round(saida_custo.custo_mn_kg, 4),
+        "custo_animal_dia":          round(saida_custo.custo_animal_dia, 4),
+        "custo_lote_dia":            round(saida_custo.custo_lote_dia, 4),
+        "tem_ingrediente_sem_preco": saida_custo.tem_ingrediente_sem_preco,
+    }
+
+
 def _construir_payload(
     formulacao_id: int,
     participacao_dicts: list[dict],
@@ -199,6 +266,7 @@ def _construir_payload(
     cms_kg: float,
     exigencia_configurada: dict | None,
     alertas: list[dict],
+    custos: dict | None,
     usuario_id: int | None,
     motivo: str,
 ) -> dict:
@@ -208,9 +276,13 @@ def _construir_payload(
     schema_version deve ser incrementado se a estrutura do payload
     mudar — permite que o front-end e os endpoints de histórico
     saibam como deserializar cada versão (seção 16 / risco 5).
+
+    schema_version passou de 1 para 2 nesta mudança: snapshots antigos
+    (schema_version=1) não têm a chave "custos" — trate isso no front
+    como ausência de dado, não como erro de parsing.
     """
     return {
-        "schema_version":   1,
+        "schema_version":   2,
         "formulacao_id":    formulacao_id,
         "motivo":           motivo,
         "usuario_id":       usuario_id,
@@ -220,5 +292,6 @@ def _construir_payload(
         "vetor_total":      vetor_total,
         "resultado_adequacao": resultado,
         "alertas":          alertas,
+        "custos":           custos,
         "nutrientes_ordem": [n.value for n in NUTRIENTES_ORDEM],
     }

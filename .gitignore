@@ -10,8 +10,11 @@
 db.sqlite3
 static/
 media/
+base_ovino.xls
+pdf_frontend/
 diagramas/
 anotacoes.md
+reuniao.md
 
 # Django stuff
 *.log

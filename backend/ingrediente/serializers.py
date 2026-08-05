@@ -2,9 +2,22 @@
 
 from django.db.models import OrderBy
 from rest_framework import serializers
-from .models import Ingrediente
+from .models import Ingrediente, PrecoIngredienteUsuario
+from accounts.models import Usuario
 
 # pylint: disable= too-few-public-methods
+
+class AtualizarPrecoCatalogoInputSerializer(serializers.Serializer):
+    """
+    Corpo de PATCH /api/ingredientes/{id}/preco/.
+
+    Sempre grava no banco de preços regional do usuário logado
+    (PrecoIngredienteUsuario) — não existe conceito de "escopo" aqui,
+    pois fora do contexto de uma formulação só existe um destino
+    possível para o preço.
+    """
+    preco = serializers.FloatField(min_value=0.0, label="Preço (R$/kg MN)")
+
 
 class IngredienteSerializer(serializers.ModelSerializer):
     '''serializer do ingrediente'''
@@ -17,6 +30,7 @@ class IngredienteSerializer(serializers.ModelSerializer):
     usuario_nome = serializers.CharField(
         source='usuario.nome', read_only=True, default=None
     )
+    preco_kg_mn = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         '''classe meta, define os campos do serializer'''
@@ -25,6 +39,7 @@ class IngredienteSerializer(serializers.ModelSerializer):
             'id',
             'usuario',
             'usuario_nome',
+            'preco_kg_mn',
             'classificacao',
             'classificacao_display',
             'tipo',
@@ -46,6 +61,7 @@ class IngredienteSerializer(serializers.ModelSerializer):
         read_only_fields = [
             'id',
             'usuario',
+            'preco_kg_mn',
             'fonte_valadares',
             'dt_cadastro',
             'dt_atualizacao',
@@ -78,3 +94,17 @@ class IngredienteSerializer(serializers.ModelSerializer):
                 'Ingredientes da tabela Valadares não podem ser editados.'
             )
         return attrs
+
+    def get_preco_kg_mn(self, obj):
+        """Retorna o preço (se houver) gravado pelo usuário para este ingrediente."""
+        request = self.context.get('request')
+        if not request or not hasattr(request, 'user'):
+            return None
+        try:
+            perfil = request.user.perfil_usuario
+        except Usuario.DoesNotExist:
+            return None
+        registro = PrecoIngredienteUsuario.objects.filter(usuario=perfil, ingrediente=obj).first()
+        if registro:
+            return registro.preco_kg_mn
+        return None

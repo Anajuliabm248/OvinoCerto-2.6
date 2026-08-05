@@ -30,7 +30,7 @@ from formulacao.engines.motor_sugestao import (
 from formulacao.domain.nutrientes import NUTRIENTES_ORDEM, Nutriente, indice_de
 from formulacao.models import IngredienteFormulacao
 from formulacao.repositories import SnapshotRepository
-from ingrediente.models import Ingrediente
+from ingrediente.models import Ingrediente, PrecoIngredienteUsuario
 
 
 class SugerirIngredientesService:
@@ -40,6 +40,7 @@ class SugerirIngredientesService:
         formulacao_id: int,
         usuario_id: int | None = None,
         modo: str = "adicionar",
+        criterio: str = "nutricional",
         ing_form_id: int | None = None,
         max_resultados: int = 10,
     ) -> list[SugestaoIngrediente]:
@@ -47,8 +48,10 @@ class SugerirIngredientesService:
         Parâmetros
         ----------
         formulacao_id  : formulação cujo resultado será consultado.
-        usuario_id     : perfil do usuário (para incluir ingredientes custom).
-        modo           : 'adicionar' | 'substituir'.
+        usuario_id     : perfil do usuário (para incluir ingredientes custom
+                         e resolver o preço regional dele por candidato).
+        modo           : 'adicionar' | 'substituir' — conjunto de candidatos.
+        criterio       : 'nutricional' | 'custo_beneficio' — ordenação.
         ing_form_id    : ID do IngredienteFormulacao a substituir
                          (obrigatório em modo 'substituir').
         max_resultados : limite da lista retornada.
@@ -71,6 +74,7 @@ class SugerirIngredientesService:
         )
 
         vetor_substituido: np.ndarray | None = None
+        fracao_substituido: float | None = None
         ids_excluir: set[int]
 
         if modo == "substituir":
@@ -89,6 +93,7 @@ class SugerirIngredientesService:
                 )
             if ing_form.ingrediente:
                 vetor_substituido = _ingrediente_para_array(ing_form.ingrediente)
+                fracao_substituido = float(ing_form.ms_porcent) / 100.0
                 ids_excluir = {ing_form.ingrediente_id}
             else:
                 ids_excluir = set()
@@ -101,6 +106,13 @@ class SugerirIngredientesService:
             .exclude(pk__in=ids_excluir)
             .order_by("classificacao", "tipo", "nome")
         )
+        candidatos_ing = list(qs)
+
+        precos_usuario = dict(
+            PrecoIngredienteUsuario.objects
+            .filter(usuario_id=usuario_id, ingrediente_id__in=[c.pk for c in candidatos_ing])
+            .values_list("ingrediente_id", "preco_kg_mn")
+        )
 
         candidatos = [
             CandidatoSugestao(
@@ -108,10 +120,11 @@ class SugerirIngredientesService:
                 nome=ing.nome,
                 classificacao=ing.classificacao,
                 tipo=ing.tipo,
-                custo_kg=float(ing.custo_kg or 0.0),
+                custo_kg=float(precos_usuario.get(ing.pk, 0.0)),
+                ms_percentual=float(ing.ms or 0.0),
                 vetor=_ingrediente_para_array(ing),
             )
-            for ing in qs
+            for ing in candidatos_ing
         ]
 
         return MotorSugestao.sugerir(
@@ -119,7 +132,9 @@ class SugerirIngredientesService:
             candidatos=candidatos,
             vetor_total_atual=vetor_total,
             modo=modo,
+            criterio=criterio,
             vetor_substituido=vetor_substituido,
+            fracao_substituido=fracao_substituido,
             max_resultados=max_resultados,
         )
 

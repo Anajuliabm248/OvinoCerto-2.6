@@ -36,7 +36,10 @@ from formulacao.api.serializers import (
     AjustarParticipacaoInputSerializer,
     AlertaSerializer,
     AtualizarExigenciaInputSerializer,
+    AtualizarParametrosViabilidadeInputSerializer,
+    AtualizarPrecoInputSerializer,
     ConfiguracaoNutrienteSerializer,
+    CustoFormulacaoOutputSerializer,
     EventoFormulacaoSerializer,
     ExigenciaNRCSerializer,
     FormulacaoDetailSerializer,
@@ -45,17 +48,27 @@ from formulacao.api.serializers import (
     IngredienteDisponivelSerializer,
     IngredienteFormulacaoSerializer,
     IniciarFormulacaoInputSerializer,
+    ParametrosViabilidadeSerializer,
     ResultadoAdequacaoOutputSerializer,
     SnapshotDetailSerializer,
     SnapshotListSerializer,
     SugestaoIngredienteSerializer,
+    ViabilidadeOutputSerializer,
 )
 from formulacao.models import Formulacao
-from formulacao.repositories import AlertaRepository, EventoRepository, SnapshotRepository
+from formulacao.repositories import (
+    AlertaRepository,
+    EventoRepository,
+    ParametrosViabilidadeRepository,
+    SnapshotRepository,
+)
 from formulacao.services import (
     AdicionarIngredienteService,
     AjustarParticipacaoService,
     AtualizarExigenciaService,
+    AtualizarParametrosViabilidadeService,
+    AtualizarPrecoIngredienteService,
+    CalcularViabilidadeService,
     GerarFormulacaoInicialService,
     IniciarFormulacaoService,
     RecalcularFormulacaoService,
@@ -81,6 +94,8 @@ _INPUT_SERIALIZER_MAP = {
     "atualizar_exigencia":   AtualizarExigenciaInputSerializer,
     "adicionar_ingrediente": AdicionarIngredienteInputSerializer,
     "ajustar_ingrediente":   AjustarParticipacaoInputSerializer,
+    "atualizar_preco_ingrediente": AtualizarPrecoInputSerializer,
+    "atualizar_parametros_viabilidade": AtualizarParametrosViabilidadeInputSerializer,
 }
 
 
@@ -115,17 +130,22 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
     POST   /formulacoes/{id}/ingredientes/
     DELETE /formulacoes/{id}/ingredientes/{ing_form_id}/
     PATCH  /formulacoes/{id}/ingredientes/{ing_form_id}/ajustar/
+    PATCH  /formulacoes/{id}/ingredientes/{ing_form_id}/preco/
     POST   /formulacoes/{id}/ingredientes/{ing_form_id}/destravar/
 
     Recálculo e resultado
     ---------------------
     POST   /formulacoes/{id}/recalcular/
     GET    /formulacoes/{id}/resultado/
+    GET    /formulacoes/{id}/custos/
+    GET    /formulacoes/{id}/viabilidade/
+    PATCH  /formulacoes/{id}/viabilidade/parametros/
 
     Sugestões
     ---------
     GET    /formulacoes/{id}/sugestoes/
-           ?modo=adicionar|substituir  &ing_form_id=X  &max_resultados=10
+           ?modo=adicionar|substituir  &criterio=nutricional|custo_beneficio
+           &ing_form_id=X  &max_resultados=10
 
     Versões (snapshots)
     -------------------
@@ -219,9 +239,16 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["get"], url_path="ingredientes-disponiveis")
     def ingredientes_disponiveis(self, request):
-        """GET /formulacoes/ingredientes-disponiveis/"""
+        """
+        GET /formulacoes/ingredientes-disponiveis/
+            ?ordenar_por_preco=asc|desc   (opcional; padrão: volumoso->concentrado)
+        """
         perfil = self._perfil(request)
-        qs     = listar_ingredientes_disponiveis(usuario_id=perfil.id if perfil else None)
+        ordenar_por_preco = request.query_params.get("ordenar_por_preco")
+        qs = listar_ingredientes_disponiveis(
+            usuario_id=perfil.id if perfil else None,
+            ordenar_por_preco=ordenar_por_preco,
+        )
         return Response(IngredienteDisponivelSerializer(qs, many=True).data)
 
     # ------------------------------------------------------------------
@@ -307,7 +334,7 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
             return Response([])
         return Response(ConfiguracaoNutrienteSerializer(configs, many=True).data)
 
-    @action(detail=True, methods=["patch"], url_path=r"exigencia/(?P<nutriente>[A-Z_]+)")
+    @action(detail=True, methods=["post"], url_path=r"exigencia/(?P<nutriente>[A-Z_]+)")
     def atualizar_exigencia(self, request, pk=None, nutriente=None):
         """
         PATCH /formulacoes/{id}/exigencia/{NUTRIENTE}/
@@ -390,7 +417,7 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
 
     @action(
         detail=True,
-        methods=["patch"],
+        methods=["post"],
         url_path=r"ingredientes/(?P<ing_form_id>\d+)/ajustar",
     )
     def ajustar_ingrediente(self, request, pk=None, ing_form_id=None):
@@ -413,6 +440,46 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
                 formulacao_id=int(pk),
                 ing_form_id  =int(ing_form_id),
                 nova_fracao  =ser.get_fracao(),
+                usuario_id   =perfil.id if perfil else None,
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        formulacao = Formulacao.objects.get(pk=pk)
+        return Response(FormulacaoDetailSerializer(formulacao).data)
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"ingredientes/(?P<ing_form_id>\d+)/preco",
+    )
+    def atualizar_preco_ingrediente(self, request, pk=None, ing_form_id=None):
+        """
+        PATCH /formulacoes/{id}/ingredientes/{ing_form_id}/preco/
+
+        Corpo: {"preco": 1.85, "escopo": "receita" | "geral"}
+
+          escopo="geral"   -> grava no banco de preços regional do
+                              usuário (vale para todas as formulações
+                              dele que usarem este ingrediente sem
+                              override próprio).
+          escopo="receita" -> vale só para esta linha desta formulação.
+
+        Retorna a formulação completa (indicadores de custo já
+        recalculados).
+        """
+        self._get_formulacao(request, pk)
+
+        ser = self.get_serializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        try:
+            perfil = self._perfil(request)
+            AtualizarPrecoIngredienteService.executar(
+                formulacao_id=int(pk),
+                ing_form_id  =int(ing_form_id),
+                novo_preco   =ser.validated_data["preco"],
+                escopo       =ser.validated_data["escopo"],
                 usuario_id   =perfil.id if perfil else None,
             )
         except ValueError as exc:
@@ -457,7 +524,7 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
         """
         POST /formulacoes/{id}/recalcular/
 
-        Idempotente — recalcula sem alterar participações.
+        recalcula sem alterar participações.
         Útil após mudar exigências configuradas sem redistribuir.
         """
         self._get_formulacao(request, pk)
@@ -503,6 +570,145 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
         })
 
     # ------------------------------------------------------------------
+    # Indicadores de custo
+    # ------------------------------------------------------------------
+
+    @action(detail=True, methods=["get"], url_path="custos")
+    def custos(self, request, pk=None):
+        """
+        GET /formulacoes/{id}/custos/
+
+        Custos da formulação.
+        """
+        formulacao = self._get_formulacao(request, pk)
+
+        if formulacao.custo_ms_kg is None:
+            return Response(
+                {"detail": "Formulação ainda não possui indicadores de custo calculados."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        from ingrediente.models import PrecoIngredienteUsuario
+
+        linhas = list(
+            formulacao.ingredientes_formulacao
+            .select_related("ingrediente")
+            .order_by("-custo_dia")
+        )
+        ids_ingredientes = [l.ingrediente_id for l in linhas if l.ingrediente_id]
+        precos_usuario = dict(
+            PrecoIngredienteUsuario.objects
+            .filter(usuario_id=formulacao.usuario_id, ingrediente_id__in=ids_ingredientes)
+            .values_list("ingrediente_id", "preco_kg_mn")
+        )
+
+        breakdown = []
+        tem_sem_preco = False
+        for l in linhas:
+            if l.custo_kg_mn_override is not None:
+                custo_resolvido = l.custo_kg_mn_override
+            elif l.ingrediente_id in precos_usuario:
+                custo_resolvido = precos_usuario[l.ingrediente_id]
+            else:
+                custo_resolvido = None
+
+            if custo_resolvido is None and l.ms_porcent > 0:
+                tem_sem_preco = True
+
+            breakdown.append({
+                "id":           l.id,
+                "ingrediente":  {"nome": l.ingrediente.nome if l.ingrediente else "(removido)"},
+                "ms_porcent":   l.ms_porcent,
+                "custo_kg_mn":  custo_resolvido,
+                "custo_dia":    l.custo_dia,
+                "origem_custo": l.origem_custo,
+            })
+
+        payload = {
+            "custo_mn_kg":               formulacao.custo_mn_kg,
+            "custo_ms_kg":               formulacao.custo_ms_kg,
+            "custo_animal_dia":          formulacao.custo_animal_dia,
+            "custo_lote_dia":            formulacao.custo_lote_dia,
+            "tem_ingrediente_sem_preco": tem_sem_preco,
+            "breakdown":                 breakdown,
+        }
+        return Response(CustoFormulacaoOutputSerializer(payload).data)
+
+    # ------------------------------------------------------------------
+    # Viabilidade (Quadros 9-14)
+    # ------------------------------------------------------------------
+
+    @action(detail=True, methods=["get"], url_path="viabilidade")
+    def viabilidade(self, request, pk=None):
+        """
+        GET /formulacoes/{id}/viabilidade/
+
+        Custos e Viabilidade da Dieta
+        Requer `preco_venda_kg_pv` já definido, se ainda não foi
+        informado, retorna 400 apontando para o PATCH de parâmetros.
+        """
+        formulacao = self._get_formulacao(request, pk)
+
+        try:
+            saida = CalcularViabilidadeService.executar(int(pk))
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        parametros = ParametrosViabilidadeRepository.get_ou_criar_default(int(pk))
+        lote = formulacao.lote
+
+        payload = {
+            "dados_animal": {
+                "especie":      "Ovino",
+                "raca":         lote.raca,
+                "sistema":      lote.sistema,
+                "categoria":    lote.get_categoria_display(),
+                "peso_vivo_kg": lote.peso_vivo,
+            },
+            "parametros":   parametros,
+            "indices":      saida.indices,
+            "linhas_custo": saida.linhas_custo,
+            "consumo_total_percentual":    saida.consumo_total_percentual,
+            "consumo_kg_dia_animal_total": saida.consumo_kg_dia_animal_total,
+            "consumo_kg_dia_lote_total":   saida.consumo_kg_dia_lote_total,
+            "kg_total_periodo_total":      saida.kg_total_periodo_total,
+            "investimento_total_geral":    saida.investimento_total_geral,
+            "custo_por_animal_total":      saida.custo_por_animal_total,
+            "custo_por_animal_dia_total":  saida.custo_por_animal_dia_total,
+            "preco_minimo_kg_pv":          saida.preco_minimo_kg_pv,
+            "resultado_animal": saida.resultado_animal,
+            "resultado_lote":   saida.resultado_lote,
+        }
+        return Response(ViabilidadeOutputSerializer(payload).data)
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="viabilidade/parametros",
+    )
+    def atualizar_parametros_viabilidade(self, request, pk=None):
+        """
+        PATCH /formulacoes/{id}/viabilidade/parametros/
+
+        Índices Zootécnicos e preco_venda_kg_pv
+        partial update, só os campos enviados são alterados.
+        """
+        self._get_formulacao(request, pk)
+
+        ser = self.get_serializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        try:
+            parametros = AtualizarParametrosViabilidadeService.executar(
+                formulacao_id=int(pk),
+                **ser.validated_data,
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(ParametrosViabilidadeSerializer(parametros).data)
+
+    # ------------------------------------------------------------------
     # Sugestões de ingredientes
     # ------------------------------------------------------------------
 
@@ -510,9 +716,10 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
     def sugestoes(self, request, pk=None):
         """
         GET /formulacoes/{id}/sugestoes/
-            ?modo=adicionar           (padrão)
+            ?modo=adicionar              (padrão)
             ?modo=substituir&ing_form_id=X
-            ?max_resultados=10        (padrão)
+            ?criterio=nutricional        (padrão) | custo_beneficio
+            ?max_resultados=10           (padrão)
         """
         self._get_formulacao(request, pk)
 
@@ -520,6 +727,13 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
         if modo not in ("adicionar", "substituir"):
             return Response(
                 {"detail": "Parâmetro 'modo' deve ser 'adicionar' ou 'substituir'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        criterio = request.query_params.get("criterio", "nutricional")
+        if criterio not in ("nutricional", "custo_beneficio"):
+            return Response(
+                {"detail": "Parâmetro 'criterio' deve ser 'nutricional' ou 'custo_beneficio'."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -537,6 +751,7 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
                 formulacao_id =int(pk),
                 usuario_id    =perfil.id if perfil else None,
                 modo          =modo,
+                criterio      =criterio,
                 ing_form_id   =ing_form_id,
                 max_resultados=max_res,
             )

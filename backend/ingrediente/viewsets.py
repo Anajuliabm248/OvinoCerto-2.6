@@ -5,17 +5,25 @@ from email.policy import default
 from django.forms.fields import IntegerField
 import numpy as np
 
-from rest_framework import viewsets
+from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied
 from django.db.models import Q, Case, When, Value, IntegerField
+from django.shortcuts import get_object_or_404
 from django.db.models.functions import Lower
 
 from accounts.models import Usuario
-from .models import Ingrediente, CLASSIFICACAO_CHOICES, TIPO_CHOICES
-from .serializers import IngredienteSerializer
+from .models import (
+    Ingrediente,
+    CLASSIFICACAO_CHOICES,
+    TIPO_CHOICES,
+    PrecoIngredienteUsuario,
+    HistoricoPrecoIngrediente,
+    OrigemAlteracaoPrecoChoices,
+)
+from .serializers import AtualizarPrecoCatalogoInputSerializer, IngredienteSerializer
 
 
 # pylint: disable= no-member, too-many-ancestors, unused-argument
@@ -31,9 +39,8 @@ class IngredienteViewSet(viewsets.ModelViewSet):
     - GET  /api/ingredientes/?tipo=          → filtro
     - GET  /api/ingredientes/?search=        → busca por nome
     - GET  /api/ingredientes/meus/           → atalho: só custom do usuário
-    - GET  /api/ingredientes/{id}/substitutos/?objetivo=custo|pb|fdn
-                                            → sugestões de substituição
     - POST /api/ingredientes/               → cria ingrediente custom
+    - PATCH /api/ingredientes/{id}/preco/        → atualiza preço do ingrediente (qualquer, Valadares incluso)
     - PUT/PATCH /api/ingredientes/{id}/     → edita (só os próprios, não-Valadares)
     - DELETE /api/ingredientes/{id}/        → exclui (só os próprios, não-Valadares)
     """
@@ -138,66 +145,62 @@ class IngredienteViewSet(viewsets.ModelViewSet):
             'tipos':          [{'value': v, 'label': l} for v, l in TIPO_CHOICES],
         })
 
-    # GET /api/ingredientes/{id}/substitutos/?objetivo=custo|pb|fdn|ndt
-    @action(detail=True, methods=['get'])
-    def substitutos(self, request, pk=None):
+    # PATCH /api/ingredientes/{id}/preco/
+    @action(detail=True, methods=['patch'], url_path='preco')
+    def preco(self, request, pk=None):
         """
-        Sugere substitutos para o ingrediente, rankeados por objetivo:
-          - custo  → menor custo_kg
-          - pb     → PB mais próximo
-          - fdn    → FDN mais próximo
-          - ndt    → NDT mais próximo
-        """
-        ingrediente = self.get_object()
-        objetivo = request.query_params.get('objetivo', 'custo').strip().lower()
-        limite   = int(request.query_params.get('limite', 5))
+        PATCH /api/ingredientes/{id}/preco/
 
-        # Candidatos: mesma classificação, exclui o próprio
+        Corpo: {"preco": 1.85}
+
+        preço é editável em QUALQUER ingrediente visível (Valadares incluso), 
+        porque o destino é o banco de preços regional do próprio usuário, 
+        não o registro compartilhado do Ingrediente. 
+        Editar preço nunca modifica a
+        composição bromatológica nem a linha do catálogo.
+        """
         try:
             perfil = request.user.perfil_usuario
-            candidatos = Ingrediente.objects.filter(
-                classificacao=ingrediente.classificacao
-            ).filter(
-                Q(fonte_valadares=True) | Q(usuario=perfil)
-            ).exclude(pk=ingrediente.pk)
         except Usuario.DoesNotExist:
-            candidatos = Ingrediente.objects.filter(
-                classificacao=ingrediente.classificacao,
-                fonte_valadares=True,
-            ).exclude(pk=ingrediente.pk)
+            return Response(
+                {'detail': 'Complete seu perfil antes de definir preços.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        if not candidatos.exists():
-            return Response([])
+        ingrediente = get_object_or_404(self.get_queryset(), pk=pk)
+        ser = AtualizarPrecoCatalogoInputSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        novo_preco = ser.validated_data['preco']
 
-        vec_ref = ingrediente.to_vetor_nutricional()  # [pb, ndt, fdn, ee, ca, p]
+        # Obtem registro atual (se houver) para gravar histórico
+        registro_antigo = PrecoIngredienteUsuario.objects.filter(
+            usuario=perfil, ingrediente=ingrediente
+        ).first()
+        preco_anterior = registro_antigo.preco_kg_mn if registro_antigo else None
 
-        def distancia(c):
-            vec_c = c.to_vetor_nutricional()
-            return float(np.linalg.norm(vec_ref - vec_c))
+        registro, created = PrecoIngredienteUsuario.objects.update_or_create(
+            usuario=perfil,
+            ingrediente=ingrediente,
+            defaults={'preco_kg_mn': novo_preco},
+        )
 
-        def score(c):
-            if objetivo == 'custo':
-                return c.custo_kg
-            if objetivo == 'pb':
-                return abs(c.pb - ingrediente.pb)
-            if objetivo == 'fdn':
-                return abs(c.fdn - ingrediente.fdn)
-            if objetivo == 'ndt':
-                return abs(c.ndt - ingrediente.ndt)
-            # default: distância euclidiana
-            return distancia(c)
+        # Grava histórico da alteração (origem = CATALOGO)
+        try:
+            origem = OrigemAlteracaoPrecoChoices.CATALOGO
+        except Exception:
+            origem = 'CATALOGO'
 
-        rankados = sorted(candidatos, key=score)[:limite]
+        HistoricoPrecoIngrediente.objects.create(
+            ingrediente=ingrediente,
+            usuario=perfil,
+            preco_anterior=preco_anterior,
+            preco_novo=novo_preco,
+            origem_alteracao=origem,
+        )
 
-        resultado = []
-        for c in rankados:
-            resultado.append({
-                'ingrediente':          IngredienteSerializer(c).data,
-                'delta_custo':          round(c.custo_kg - ingrediente.custo_kg, 4),
-                'delta_pb':             round(c.pb - ingrediente.pb, 4),
-                'delta_ndt':            round(c.ndt - ingrediente.ndt, 4),
-                'delta_fdn':            round(c.fdn - ingrediente.fdn, 4),
-                'distancia_euclidiana': round(distancia(c), 6),
-            })
-
-        return Response(resultado)
+        return Response({
+            'ingrediente_id': ingrediente.pk,
+            'preco_kg_mn':    registro.preco_kg_mn,
+            'dt_atualizacao': registro.dt_atualizacao,
+        })
+    

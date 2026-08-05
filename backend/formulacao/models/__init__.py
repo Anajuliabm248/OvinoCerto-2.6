@@ -7,9 +7,14 @@ from .exigencia_configurada import (
     ConfiguracaoNutriente,
     HistoricoConfiguracaoNutriente,
 )
-from .ingrediente_formulacao import IngredienteFormulacao, OrigemParticipacaoChoices
+from .ingrediente_formulacao import (
+    IngredienteFormulacao,
+    OrigemParticipacaoChoices,
+    OrigemCustoChoices,
+)
 from .snapshot import SnapshotFormulacao, EventoFormulacao, TipoEvento
 from .alerta import Alerta, TipoAlerta, SeveridadeAlerta
+from .parametros_viabilidade import ParametrosViabilidade
 
 __all__ = [
     "Formulacao",
@@ -19,10 +24,12 @@ __all__ = [
     "HistoricoConfiguracaoNutriente",
     "IngredienteFormulacao",
     "OrigemParticipacaoChoices",
+    "OrigemCustoChoices",
     "SnapshotFormulacao",
     "EventoFormulacao",
     "TipoEvento",
     "Alerta",
     "TipoAlerta",
     "SeveridadeAlerta",
+    "ParametrosViabilidade",
 ]

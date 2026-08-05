@@ -345,6 +345,7 @@ class MotorAdequacao:
 
         if resultado.success:
             fracoes = np.clip(resultado.x, 0.0, 1.0)
+            fracoes = cls._normalizar_soma_exata(fracoes, soma_alvo)
             return ResultadoDistribuicao(
                 fracoes=fracoes,
                 convergiu=True,
@@ -355,6 +356,7 @@ class MotorAdequacao:
         fracoes_fallback = cls._fallback_nnls(
             matriz_M_sub, requisitos, contrib_fixas, soma_alvo, bounds_sub
         )
+        fracoes_fallback = cls._normalizar_soma_exata(fracoes_fallback, soma_alvo)
         return ResultadoDistribuicao(
             fracoes=fracoes_fallback,
             convergiu=False,
@@ -363,6 +365,38 @@ class MotorAdequacao:
                 "Usando nnls como fallback — alertas indicarão restrições violadas."
             ),
         )
+
+    @staticmethod
+    def _normalizar_soma_exata(fracoes: np.ndarray, soma_alvo: float) -> np.ndarray:
+        """
+        Garante, por construção (divisão), que sum(fracoes) == soma_alvo
+        — não por tolerância de solver.
+
+        Por que isso é necessário mesmo com SLSQP "convergindo": o
+        ftol do SLSQP (1e-9) e principalmente o np.clip(x, 0, 1) logo
+        após a solução podem deixar um resíduo na soma sempre que
+        algum componente satura em 0 ou 1 (ex.: um ingrediente que o
+        solver queria deixar levemente negativo por erro numérico).
+        Sem renormalizar depois do clip, esse resíduo se propaga pra
+        soma final e pode aparecer como 99,xx% ou 100,xx% em vez de
+        100,00% — exatamente o que este método elimina.
+
+        REGRA DE NEGÓCIO EXPLÍCITA: soma = soma_alvo é um invariante
+        RÍGIDO (nunca aproximado) — prioridade maior que qualquer
+        bound de inclusão ou meta nutricional, que continuam
+        "melhor esforço". Em casos extremos, esta normalização pode
+        empurrar um componente uma fração de ponto percentual além do
+        seu limite de inclusão configurado; isso é aceito
+        deliberadamente pela regra "a soma nunca pode ultrapassar
+        100%, em hipótese alguma".
+        """
+        n = len(fracoes)
+        if n == 0:
+            return fracoes
+        soma_atual = float(fracoes.sum())
+        if soma_atual <= 1e-12:
+            return np.full(n, soma_alvo / n, dtype=float)
+        return fracoes * (soma_alvo / soma_atual)
 
     @staticmethod
     def _adicionar_restricoes_limite(

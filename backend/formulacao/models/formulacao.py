@@ -66,6 +66,18 @@ class Formulacao(models.Model):
     dt_inc = models.DateTimeField(auto_now_add=True, verbose_name="Criado em")
     dt_alt = models.DateTimeField(auto_now=True,     verbose_name="Alterado em")
 
+    
+    # Indicadores de custo (Fase 2) — resumo, atualizado a cada recálculo.
+    # Detalhe completo (breakdown por ingrediente) vive no payload do
+    # SnapshotFormulacao, chave "custos". Estes campos existem soltos
+    # aqui só para permitir listagem/ordenação rápida sem abrir o snapshot.
+    
+
+    custo_mn_kg = models.FloatField(null=True, blank=True, verbose_name="Custo (R$/kg MN)")
+    custo_ms_kg = models.FloatField(null=True, blank=True, verbose_name="Custo (R$/kg MS)")
+    custo_animal_dia = models.FloatField(null=True, blank=True, verbose_name="Custo (R$/animal/dia)")
+    custo_lote_dia = models.FloatField(null=True, blank=True, verbose_name="Custo (R$/lote/dia)")
+
     class Meta:
         '''configs do BD'''
         verbose_name        = "Formulação"
