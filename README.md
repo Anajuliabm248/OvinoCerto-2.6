@@ -1,4 +1,5 @@
 # 🐑 OvinoCerto 2.6
+# 🐑 OvinoCerto 2.6
 > Sistema automatizado de formulação de rações para ovinos da UFSM-Politécnico.
 
 ## 📖 Sobre o Projeto
