@@ -751,6 +751,32 @@ class MotorAdequacao:
                 x[livres[0]] += residual
 
         x = np.clip(x, lbs, ubs)
+
+        # O SLSQP pode devolver resíduos como 2e-16 para uma variável cujo
+        # limite inferior é zero. Embora isso seja numericamente equivalente
+        # a zero, o JSON o expõe em notação científica e induz a leitura de
+        # "2e-16" como "2". Canonizamos valores colados aos limites e
+        # transferimos o resíduo para uma variável com capacidade, preservando
+        # simultaneamente a soma e os bounds.
+        tolerancia_canonica = 1e-12
+        proximos_do_minimo = np.abs(x - lbs) <= tolerancia_canonica
+        proximos_do_maximo = np.abs(x - ubs) <= tolerancia_canonica
+        x[proximos_do_minimo] = lbs[proximos_do_minimo]
+        x[proximos_do_maximo] = ubs[proximos_do_maximo]
+
+        residual = float(soma_alvo - x.sum())
+        if residual != 0.0:
+            capacidade = (ubs - x) if residual > 0 else (x - lbs)
+            candidatos = np.where(capacidade > 0.0)[0]
+            if len(candidatos):
+                # Ao acrescentar um resíduo positivo, prefira uma participação
+                # já significativa. Escolher a maior capacidade poderia
+                # recolocar 2e-16 justamente no ingrediente recém-zerado.
+                criterio = x[candidatos] if residual > 0 else capacidade[candidatos]
+                idx = int(candidatos[np.argmax(criterio)])
+                x[idx] += residual
+
+        x = np.clip(x, lbs, ubs)
         if abs(float(x.sum()) - soma_alvo) > 1e-10:
             raise RuntimeError("Falha interna ao projetar participações para a soma alvo.")
         return x

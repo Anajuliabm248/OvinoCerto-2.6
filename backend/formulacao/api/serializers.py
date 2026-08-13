@@ -249,6 +249,14 @@ class IngredienteFormulacaoSerializer(serializers.ModelSerializer):
         source="ingrediente.limite_max_participacao", read_only=True, allow_null=True,
     )
 
+    def to_representation(self, instance):
+        """Expõe resíduos numéricos sem notação científica enganosa."""
+        data = super().to_representation(instance)
+        ms_porcent = data.get("ms_porcent")
+        if ms_porcent is not None and abs(float(ms_porcent)) < 1e-9:
+            data["ms_porcent"] = 0.0
+        return data
+
     class Meta:
         """Entrega campos de entrada, saídas calculadas e metadados de custo."""
         model  = IngredienteFormulacao

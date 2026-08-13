@@ -220,3 +220,19 @@ def test_projecao_preserva_soma_e_limites_em_varios_vetores():
             assert resultado.sum() == pytest.approx(1.0, abs=1e-10)
             assert np.all(resultado >= -1e-12)
             assert np.all(resultado <= limites_maximos + 1e-12)
+
+
+def test_projecao_converte_residuo_numerico_em_zero_sem_perder_a_soma():
+    resultado = MotorAdequacao._projetar_soma(
+        np.array([
+            0.93131,
+            0.06136658273828485,
+            0.007323417261714967,
+            2.0698495689799003e-16,
+        ]),
+        soma_alvo=1.0,
+        bounds=[(0.0, 1.0)] * 4,
+    )
+
+    assert resultado[-1] == 0.0
+    assert resultado.sum() == pytest.approx(1.0, abs=1e-12)
