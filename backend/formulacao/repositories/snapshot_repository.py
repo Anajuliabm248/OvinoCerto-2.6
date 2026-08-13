@@ -17,6 +17,7 @@ from formulacao.models import EventoFormulacao, SnapshotFormulacao, TipoEvento
 
 
 class SnapshotRepository:
+    """Versiona de forma sequencial o estado completo de cada formulação."""
     
 
     @staticmethod
@@ -56,6 +57,7 @@ class SnapshotRepository:
 
     @staticmethod
     def get_ultimo(formulacao_id: int) -> SnapshotFormulacao | None:
+        """Retorna a versão mais recente ou ``None`` quando ainda não há histórico."""
         return (
             SnapshotFormulacao.objects
             .filter(formulacao_id=formulacao_id)
@@ -99,6 +101,7 @@ class SnapshotRepository:
 
 
 class EventoRepository:
+    """Persiste e consulta a trilha imutável de ações feitas na formulação."""
 
     @staticmethod
     def registrar(
@@ -107,6 +110,7 @@ class EventoRepository:
         payload: dict | None = None,
         usuario_id: int | None = None,
     ) -> EventoFormulacao:
+        """Registra tipo, contexto e autoria de uma mudança feita na formulação."""
         return EventoFormulacao.objects.create(
             formulacao_id=formulacao_id,
             tipo_evento=tipo_evento,
@@ -116,6 +120,7 @@ class EventoRepository:
 
     @staticmethod
     def listar(formulacao_id: int):
+        """Lista os eventos da formulação começando pelo mais recente."""
         return (
             EventoFormulacao.objects
             .filter(formulacao_id=formulacao_id)

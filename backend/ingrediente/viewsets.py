@@ -1,9 +1,4 @@
-"""viewsets do app de ingredientes"""
-
-from email.policy import default
-
-from django.forms.fields import IntegerField
-import numpy as np
+"""API do catálogo compartilhado, ingredientes customizados e preços pessoais."""
 
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -47,8 +42,18 @@ class IngredienteViewSet(viewsets.ModelViewSet):
     serializer_class = IngredienteSerializer
     permission_classes = [IsAuthenticated]
 
+    def _perfil_obrigatorio(self):
+        """Retorna o perfil atual ou produz um erro de permissão compreensível."""
+        try:
+            return self.request.user.perfil_usuario
+        except Usuario.DoesNotExist as exc:
+            raise PermissionDenied(
+                'Complete seu perfil antes de alterar ingredientes.'
+            ) from exc
+
     # Queryset: Valadares (públicos) + ingredientes do usuário logado
     def get_queryset(self):
+        """Lista itens públicos e customizados do usuário, aplicando os filtros."""
         user = self.request.user
 
         try:
@@ -95,31 +100,72 @@ class IngredienteViewSet(viewsets.ModelViewSet):
         return qs.order_by('e_volumoso', Lower('nome')).select_related('usuario')
 
 
-    # Cria ingrediente custom associado ao usuário logado
+    @action(detail=False, methods=['post'])
+    def adicionar(self, request):
+        """Mantém a rota legada ``/adicionar/`` usando a criação padrão."""
+        return self.create(request)
+
     def perform_create(self, serializer):
-        try:
-            perfil = self.request.user.perfil_usuario
-        except Usuario.DoesNotExist as exc:
-            raise PermissionDenied('Complete seu perfil antes de adicionar ingredientes.') from exc
-        serializer.save(usuario=perfil, fonte_valadares=False)
+        """Associa toda nova linha customizada ao perfil autenticado."""
+        serializer.save(
+            usuario=self._perfil_obrigatorio(),
+            fonte_valadares=False,
+        )
+
 
     # Protege edição/exclusão: apenas ingredientes custom do próprio usuário
     def _verificar_propriedade(self, instance):
-        '''Verifica se o usuário tem permissão para editar/excluir o ingrediente'''
+        """Bloqueia alterações no catálogo público ou em itens de outro usuário."""
         if instance.fonte_valadares:
             raise PermissionDenied('Ingredientes Valadares não podem ser alterados.')
-        try:
-            perfil = self.request.user.perfil_usuario
-        except Usuario.DoesNotExist as exc:
-            raise PermissionDenied('Acesso negado.') from exc
-        if instance.usuario != perfil and not self.request.user.is_staff:
+        if self.request.user.is_staff or self.request.user.is_superuser:
+            return
+        perfil = self._perfil_obrigatorio()
+        if instance.usuario != perfil:
             raise PermissionDenied('Você só pode editar seus próprios ingredientes.')
 
-    def perform_update(self, serializer):
-        self._verificar_propriedade(serializer.instance)
+    def update(self, request, *args, **kwargs):
+        """Atualiza a rota padrão com autorização e o contrato parcial da interface."""
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        self._verificar_propriedade(instance)
+        data = self._limpar_campos_vazios_patch(request.data) if partial else request.data
+        serializer = self.get_serializer(instance, data=data, partial=partial)
+        serializer.is_valid(raise_exception=True)
         serializer.save()
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def partial_update(self, request, *args, **kwargs):
+        """Encaminha PATCH para ``update`` preservando campos vazios como não alteração."""
+        kwargs['partial'] = True
+        return self.update(request, *args, **kwargs)
+
+
+    # PUT/PATCH /api/ingredientes/{id}/editar/
+    @action(detail=True, methods=['put', 'patch'], url_path='editar')
+    def editar(self, request, pk=None):
+        """Edita total ou parcialmente um ingrediente customizado permitido."""
+        return self.update(request, pk=pk, partial=request.method.lower() == 'patch')
+
+    @staticmethod
+    def _limpar_campos_vazios_patch(data):
+        """
+        Em PATCH, null/"" em campos obrigatorios significa "nao alterar".
+        partial=True so ignora campos ausentes; campos enviados como null
+        ainda seriam validados e rejeitados pelo serializer.
+        """
+        dados = data.copy()
+        campos_obrigatorios = {
+            'classificacao', 'tipo', 'nome', 'ms', 'pb', 'ndt',
+            'fdn', 'ee', 'ca', 'p', 'custo_kg',
+        }
+        for campo in campos_obrigatorios:
+            if campo in dados and dados.get(campo) in (None, ''):
+                dados.pop(campo)
+        return dados
 
     def perform_destroy(self, instance):
+        """Verifica propriedade antes de excluir um ingrediente customizado."""
         self._verificar_propriedade(instance)
         instance.delete()
 
@@ -144,7 +190,6 @@ class IngredienteViewSet(viewsets.ModelViewSet):
             'classificacoes': [{'value': v, 'label': l} for v, l in CLASSIFICACAO_CHOICES],
             'tipos':          [{'value': v, 'label': l} for v, l in TIPO_CHOICES],
         })
-
     # PATCH /api/ingredientes/{id}/preco/
     @action(detail=True, methods=['patch'], url_path='preco')
     def preco(self, request, pk=None):
@@ -178,24 +223,18 @@ class IngredienteViewSet(viewsets.ModelViewSet):
         ).first()
         preco_anterior = registro_antigo.preco_kg_mn if registro_antigo else None
 
-        registro, created = PrecoIngredienteUsuario.objects.update_or_create(
+        registro, _ = PrecoIngredienteUsuario.objects.update_or_create(
             usuario=perfil,
             ingrediente=ingrediente,
             defaults={'preco_kg_mn': novo_preco},
         )
-
-        # Grava histórico da alteração (origem = CATALOGO)
-        try:
-            origem = OrigemAlteracaoPrecoChoices.CATALOGO
-        except Exception:
-            origem = 'CATALOGO'
 
         HistoricoPrecoIngrediente.objects.create(
             ingrediente=ingrediente,
             usuario=perfil,
             preco_anterior=preco_anterior,
             preco_novo=novo_preco,
-            origem_alteracao=origem,
+            origem_alteracao=OrigemAlteracaoPrecoChoices.CATALOGO,
         )
 
         return Response({
@@ -203,4 +242,3 @@ class IngredienteViewSet(viewsets.ModelViewSet):
             'preco_kg_mn':    registro.preco_kg_mn,
             'dt_atualizacao': registro.dt_atualizacao,
         })
-    

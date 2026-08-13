@@ -1,7 +1,8 @@
-""" serializadores para o app accounts """
+"""Validação e tradução dos dados de autenticação e perfil da API."""
 
 from django.contrib.auth import get_user_model, authenticate
 from django.contrib.auth.password_validation import validate_password
+from django.db import transaction
 from rest_framework import serializers
 
 from .models import Usuario
@@ -12,11 +13,11 @@ DjangoUser = get_user_model()
 
 
 class UsuarioSerializer(serializers.ModelSerializer):
-    '''Serializador para o model Usuario.'''
+    """Expõe o perfil autenticado sem permitir elevação de privilégio pela API."""
     username = serializers.CharField(source='user.username', read_only=True)
 
     class Meta:
-        '''classe Meta, define o model e os campos a serem serializados'''
+        """Seleciona dados públicos do perfil e protege campos de identidade."""
         model = Usuario
         fields = [
             'id',
@@ -33,11 +34,31 @@ class UsuarioSerializer(serializers.ModelSerializer):
             'is_admin',
             'is_user',
         ]
-        read_only_fields = ['id', 'is_admin', 'is_user']
+        read_only_fields = ['id', 'perfil', 'is_admin', 'is_user']
+
+    def validate_email(self, value):
+        """Normaliza o novo login e impede conflito com outra conta Django."""
+        value = value.strip().lower()
+        queryset = DjangoUser.objects.filter(username=value)
+        if self.instance:
+            queryset = queryset.exclude(pk=self.instance.user_id)
+        if queryset.exists():
+            raise serializers.ValidationError('Este e-mail já está em uso como usuário.')
+        return value
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        """Mantém e-mail do perfil, username e e-mail de autenticação sincronizados."""
+        novo_email = validated_data.get('email')
+        if novo_email and novo_email != instance.email:
+            instance.user.username = novo_email
+            instance.user.email = novo_email
+            instance.user.save(update_fields=['username', 'email'])
+        return super().update(instance, validated_data)
 
 
 class RegisterSerializer(serializers.Serializer):
-    '''Serializador para o registro de novos usuários.'''
+    """Valida o cadastro e cria, de forma atômica, conta e perfil."""
     # Credenciais Django (usar apenas o email como username)
     password = serializers.CharField(write_only=True, validators=[validate_password])
     password2 = serializers.CharField(write_only=True, label='Confirmar senha')
@@ -53,7 +74,8 @@ class RegisterSerializer(serializers.Serializer):
     produtor_ovinos = serializers.BooleanField(default=False)
 
     def validate_email(self, value):
-        '''valida o email para garantir que já não está em uso'''
+        """Normaliza o e-mail e impede duplicidade na conta ou no perfil."""
+        value = value.strip().lower()
         if Usuario.objects.filter(email=value).exists():
             raise serializers.ValidationError('Este e-mail já está cadastrado.')
         if DjangoUser.objects.filter(username=value).exists() or \
@@ -62,19 +84,21 @@ class RegisterSerializer(serializers.Serializer):
         return value
 
     def validate_cpf(self, value):
-        '''valida o cpf para garantir que já não está em uso'''
+        """Remove espaços laterais e impede o cadastro de CPF repetido."""
+        value = value.strip()
         if Usuario.objects.filter(cpf=value).exists():
             raise serializers.ValidationError('Este CPF já está cadastrado.')
         return value
 
     def validate(self, attrs):
-        '''valida se as senhas batem'''
+        """Confere a confirmação da senha e retira o campo auxiliar."""
         if attrs['password'] != attrs.pop('password2'):
             raise serializers.ValidationError({'password': 'As senhas não coincidem.'})
         return attrs
 
+    @transaction.atomic
     def create(self, validated_data):
-        '''cria o usuário'''
+        """Cria a conta Django e o perfil na mesma transação de banco."""
         email = validated_data.pop('email')
         password = validated_data.pop('password')
 
@@ -89,11 +113,12 @@ class RegisterSerializer(serializers.Serializer):
 
 
 class LoginSerializer(serializers.Serializer):
-    '''serializer de login'''
+    """Recebe e-mail e senha e devolve a conta autenticada em ``user``."""
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
 
     def validate(self, attrs):
+        """Autentica pelo e-mail usado como username e bloqueia contas inativas."""
         user = authenticate(
             username=attrs['email'],
             password=attrs['password'],

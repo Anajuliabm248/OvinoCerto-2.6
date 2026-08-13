@@ -156,11 +156,13 @@ def _chave_obj(alerta: Alerta) -> tuple:
 
 
 class AlertaRepository:
+    """Fornece consultas simples aos alertas já persistidos da formulação."""
 
     upsert = staticmethod(upsert_alertas)
 
     @staticmethod
     def listar_ativos(formulacao_id: int):
+        """Lista alertas ainda ativos, priorizando os mais graves e recentes."""
         return (
             Alerta.objects
             .filter(formulacao_id=formulacao_id, resolvido=False)
@@ -169,6 +171,7 @@ class AlertaRepository:
 
     @staticmethod
     def listar_historico(formulacao_id: int):
+        """Lista alertas ativos e resolvidos para auditoria cronológica."""
         return (
             Alerta.objects
             .filter(formulacao_id=formulacao_id)

@@ -28,10 +28,8 @@ Gerencia dois casos de uso relacionados à participação manual:
 INVARIANTE RÍGIDO (requisito de negócio): a soma de participações de
 uma formulação com ingredientes deve fechar em exatamente 100% sempre
 que houver pelo menos um ingrediente CALCULADA livre para absorver a
-diferença. Isso deixou de ser "gera alerta se não fechar" — agora o
-motor SEMPRE redistribui os livres para fechar a soma
-(MotorAdequacao._normalizar_soma_exata garante isso por construção,
-não por tolerância). O único caso em que a soma pode não fechar em
+diferença. O motor projeta as participações respeitando simultaneamente
+ soma e limites individuais. O único caso em que a soma pode não fechar em
 100% é quando NÃO HÁ ingrediente livre para compensar (todos
 MANUAL_TRAVADA) — esse caso agora é REJEITADO no momento do
 travamento (ValueError), não mais silenciosamente permitido com um
@@ -50,7 +48,7 @@ from __future__ import annotations
 from django.db import transaction
 
 from formulacao.domain.participacao import OrigemParticipacao
-from formulacao.engines.motor_adequacao import MotorAdequacao
+from formulacao.engines.motor_adequacao import ConfiguracaoIngrediente, MotorAdequacao
 from formulacao.engines.motor_recalculo import MotorRecalculo
 from formulacao.models import IngredienteFormulacao, OrigemParticipacaoChoices, TipoEvento
 from formulacao.repositories import (
@@ -61,13 +59,12 @@ from formulacao.repositories import (
 from formulacao.services._configuracao_ingrediente import configuracao_a_partir_do_ingrediente
 from formulacao.services.recalcular_formulacao_service import RecalcularFormulacaoService
 
-# Tolerância só para a VALIDAÇÃO de travamento (float noise ao redor
-# de 1.0) — não confundir com a normalização exata do motor, que não
-# usa tolerância nenhuma, usa divisão.
+# Tolerância apenas para ruído de ponto flutuante nas validações.
 _TOLERANCIA_VALIDACAO = 1e-6
 
 
 class AjustarParticipacaoService:
+    """Aplica travas manuais e redistribui o restante dentro dos limites rígidos."""
 
     @staticmethod
     @transaction.atomic
@@ -98,19 +95,36 @@ class AjustarParticipacaoService:
         fracao_anterior = ing_form.ms_porcent / 100.0
 
         # ------------------------------------------------------------------
-        # Nenhuma mudança real → encerra sem criar snapshot desnecessário
+        # Se já está travado e o valor não mudou, não há trabalho. Quando o
+        # valor calculado é igual ao informado, a chamada ainda precisa mudar
+        # a origem para MANUAL_TRAVADA.
         # ------------------------------------------------------------------
-        if abs(nova_fracao - fracao_anterior) < 1e-9:
+        if (
+            abs(nova_fracao - fracao_anterior) < 1e-9
+            and ing_form.origem_participacao
+            == OrigemParticipacaoChoices.MANUAL_TRAVADA
+        ):
             return
 
         # ------------------------------------------------------------------
         # Valida que este travamento não torna 100% impossível
         # ------------------------------------------------------------------
         participacao_atual = IngredienteFormulacaoRepository.get_participacao(formulacao_id)
+        ingredientes_formulacao = list(
+            IngredienteFormulacao.objects
+            .filter(formulacao_id=formulacao_id)
+            .select_related("ingrediente")
+            .order_by("id")
+        )
+        configuracoes_por_id = {
+            obj.id: configuracao_a_partir_do_ingrediente(obj.ingrediente)
+            for obj in ingredientes_formulacao
+        }
         tem_livre_restante = AjustarParticipacaoService._validar_travamento_possivel(
             participacao_atual=participacao_atual,
             ing_form_id=ing_form_id,
             nova_fracao=nova_fracao,
+            configuracoes_por_id=configuracoes_por_id,
         )
 
         # ------------------------------------------------------------------
@@ -217,33 +231,35 @@ class AjustarParticipacaoService:
         participacao_atual,
         ing_form_id: int,
         nova_fracao: float,
+        configuracoes_por_id: dict[int, ConfiguracaoIngrediente],
     ) -> bool:
         """
         Verifica se travar `ing_form_id` em `nova_fracao` deixa a soma
         de 100% matematicamente alcançável.
 
-        Retorna True se sobra pelo menos 1 ingrediente CALCULADA para
-        absorver a diferença (caso normal — redistribuir() cuidará do
-        resto). Retorna False só quando TODOS os ingredientes já são
-        MANUAL_TRAVADA (incluindo este) — nesse caso a soma dos
-        travados TEM que já fechar em 100% sozinha, senão não há como
-        completar.
-
-        Levanta ValueError (não deixa a operação prosseguir) quando:
-          - Os travados (outros + este) já ultrapassam 100% sozinhos
-            — nenhum CALCULADA pode "compensar" isso ficando negativo.
-          - Não sobra nenhum CALCULADA E os travados não fecham
-            exatamente em 100%.
+        Além da soma dos travados, considera a capacidade mínima e máxima
+        dos ingredientes CALCULADA restantes. Assim, a operação é rejeitada
+        antes de persistir um estado que o motor não conseguiria fechar.
         """
+        configuracao_alvo = configuracoes_por_id.get(ing_form_id)
+        if configuracao_alvo is None:
+            raise ValueError("Configuração do ingrediente não encontrada.")
+        if nova_fracao > configuracao_alvo.limite_max + _TOLERANCIA_VALIDACAO:
+            raise ValueError(
+                f"Não é possível travar este ingrediente em {nova_fracao * 100:.2f}%: "
+                f"o limite máximo cadastrado é "
+                f"{configuracao_alvo.limite_max * 100:.2f}%."
+            )
+
         soma_outros_travados = 0.0
-        n_outros_livres = 0
+        ids_outros_livres: list[int] = []
         for pos, id_atual in enumerate(participacao_atual.ids_ingredientes):
             if id_atual == ing_form_id:
                 continue
             if participacao_atual.origens[pos] == OrigemParticipacao.MANUAL_TRAVADA:
                 soma_outros_travados += float(participacao_atual.fracoes[pos])
             else:
-                n_outros_livres += 1
+                ids_outros_livres.append(id_atual)
 
         soma_travados_apos = soma_outros_travados + nova_fracao
 
@@ -256,7 +272,7 @@ class AjustarParticipacaoService:
                 "Reduza este valor ou destrave outro ingrediente primeiro."
             )
 
-        if n_outros_livres == 0 and abs(soma_travados_apos - 1.0) > _TOLERANCIA_VALIDACAO:
+        if not ids_outros_livres and abs(soma_travados_apos - 1.0) > _TOLERANCIA_VALIDACAO:
             raise ValueError(
                 f"Não há nenhum ingrediente livre (CALCULADA) para fechar a "
                 f"soma em 100%: todos os ingredientes ficariam travados "
@@ -265,7 +281,32 @@ class AjustarParticipacaoService:
                 "automaticamente."
             )
 
-        return n_outros_livres > 0
+        if ids_outros_livres:
+            try:
+                configuracoes_livres = [
+                    configuracoes_por_id[id_livre]
+                    for id_livre in ids_outros_livres
+                ]
+            except KeyError as exc:
+                raise ValueError(
+                    "Configuração de um ingrediente livre não encontrada."
+                ) from exc
+            espaco_restante = 1.0 - soma_travados_apos
+            minimo_livres = sum(cfg.limite_min for cfg in configuracoes_livres)
+            maximo_livres = sum(cfg.limite_max for cfg in configuracoes_livres)
+            if (
+                espaco_restante < minimo_livres - _TOLERANCIA_VALIDACAO
+                or espaco_restante > maximo_livres + _TOLERANCIA_VALIDACAO
+            ):
+                raise ValueError(
+                    f"Este travamento deixaria {espaco_restante * 100:.2f}% para "
+                    "os ingredientes livres, mas os limites cadastrados permitem "
+                    f"distribuir entre {minimo_livres * 100:.2f}% e "
+                    f"{maximo_livres * 100:.2f}%. Ajuste o valor ou destrave "
+                    "outro ingrediente."
+                )
+
+        return bool(ids_outros_livres)
 
     @staticmethod
     def _redistribuir_livres(formulacao_id: int):

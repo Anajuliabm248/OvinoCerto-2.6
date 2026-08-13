@@ -1,4 +1,4 @@
-''' urls do app accounts'''
+"""O app não possui rotas próprias; autenticação é registrada em ``projeto.urls``."""
 
 # pylint: skip-file
 

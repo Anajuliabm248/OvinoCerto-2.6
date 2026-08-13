@@ -1,7 +1,7 @@
 """
 
-Resolve dois problemas de viabilidade (seção 9 e 11 do documento
-de arquitetura) usando scipy.optimize.minimize (SLSQP):
+Resolve os problemas de geração inicial e redistribuição de participações
+usando scipy.optimize.minimize (SLSQP).
 
   1. gerar_distribuicao_inicial(): dado um conjunto de ingredientes
      e requisitos nutricionais, encontra um vetor de participações
@@ -11,23 +11,10 @@ de arquitetura) usando scipy.optimize.minimize (SLSQP):
      (MANUAL_TRAVADA), redistribui as participações dos livres
      (CALCULADA) no espaço restante (1 - Σ travados).
 
-Objetivo em ambos os casos: minimizar ‖x - x_alvo‖² (quadrado do módulo da diferença)
-(menor desvio possível em relação a uma distribuição-alvo heurística),
-sem qualquer função de custo econômico.
-
-Se SLSQP não convergir, usa nnls como fallback para encontrar a
-melhor aproximação possível (menor violação total) — nunca bloqueia.
-
-O SLSQP é um algoritmo usado para resolver problemas de otimização não linear
-com a possibilidade de aplicar restrições e limites. Nele definimos:
-1. Uma função objetivo (que o algoritmo tentará minimizar).
-2. As restrições (iguais, maiores ou menores que zero).
-3. Os limites (bounds) para as variáveis.
-
-ele garante que o desvio final seja muito menor do que por simplex, já que 
-por ser uma função quadrática, ela é ainda mais brutal na penalidade do desvio
-(o dobro), assim a distribuição final fica o mais parecida possível com a 
-distribuição desejada
+As regras estruturais são rígidas: soma, ingredientes travados, limites de
+participação e percentual de volumoso. Os requisitos nutricionais entram como
+penalidade de melhor esforço; quando a seleção não permite atendê-los, o motor
+preserva uma distribuição válida e o MotorAlertas informa os desvios.
 """
 
 from __future__ import annotations
@@ -35,11 +22,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import numpy as np
-from scipy.optimize import minimize, nnls
-from scipy.optimize import Bounds
+from scipy.optimize import Bounds, minimize
 
 from formulacao.domain.nutrientes import NUTRIENTES_ORDEM, Nutriente, indice_de
-from formulacao.domain.participacao import OrigemParticipacao, ParticipacaoVetor
+from formulacao.domain.participacao import ParticipacaoVetor
 from formulacao.domain.requisito import RequisitoNutriente
 
 
@@ -56,8 +42,11 @@ class ConfiguracaoIngrediente:
     classificacao: str          # "VOLUMOSO" | "CONCENTRADO"
     limite_min: float = 0.0     # fração mínima de inclusão (0-1)
     limite_max: float = 1.0     # fração máxima de inclusão (0-1)
+    tipo: str = "OUTRO"         # ENERGETICO | PROTEICO | MINERAL | ADITIVOS | ...
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "classificacao", self.classificacao.upper())
+        object.__setattr__(self, "tipo", self.tipo.upper())
         if not (0.0 <= self.limite_min <= self.limite_max <= 1.0):
             raise ValueError(
                 f"ConfiguracaoIngrediente: limites inválidos "
@@ -73,8 +62,8 @@ class ResultadoDistribuicao:
     fracoes    : vetor de participações em 0-1, indexado da mesma
                  forma que os inputs.
     convergiu  : True se o SLSQP convergiu dentro das tolerâncias.
-                 False indica "melhor esforço" — MotorAlertas reportará
-                 as restrições ainda violadas.
+                 False indica fallback numérico; as regras estruturais
+                 continuam válidas e os alertas reportam desvios nutricionais.
     mensagem   : descrição do status do solver para log/auditoria.
     """
     fracoes: np.ndarray = field(repr=False)
@@ -85,17 +74,30 @@ class ResultadoDistribuicao:
 # Motor
 
 class MotorAdequacao:
+    """Encontra participações válidas sem romper soma, travas, classes e limites."""
 
     # Percentual-alvo de volumosos na distribuição heurística inicial.
     PERCENTUAL_ALVO_VOLUMOSO: float = 0.50
 
-    # Variação máxima por ingrediente livre em uma redistribuição.
-    # Evita "saltos" visuais (seção 11).
-    VARIACAO_MAX_POR_ITERACAO: float = 0.10
-
     # Tolerância do SLSQP
     SLSQP_FTOL: float = 1e-9
     SLSQP_MAXITER: int = 1000
+
+    # Evita que ingredientes escolhidos desapareçam da geração inicial.
+    # O valor é reduzido automaticamente quando o orçamento da classe é menor.
+    MINIMO_TECNICO_GERACAO: float = 0.001
+
+    # Equilibra adequação nutricional e estabilidade da distribuição. As metas
+    # nutricionais orientam o resultado, mas não podem romper regras rígidas.
+    PESO_ADEQUACAO_NUTRICIONAL: float = 1.0
+
+    PESOS_HEURISTICOS_TIPO: dict[str, float] = {
+        "ENERGETICO": 1.0,
+        "PROTEICO": 0.25,
+        "MINERAL": 0.025,
+        "ADITIVOS": 0.01,
+        "OUTRO": 0.50,
+    }
 
     
     # API pública
@@ -123,12 +125,21 @@ class MotorAdequacao:
                 convergiu=True,
                 mensagem="Nenhum ingrediente.",
             )
+        cls._validar_dimensoes(matriz_M, n)
 
-        alvo_vol = percentual_alvo_volumoso if percentual_alvo_volumoso is not None \
-                   else cls.PERCENTUAL_ALVO_VOLUMOSO
+        alvo_vol = cls._normalizar_percentual_volumoso(
+            percentual_alvo_volumoso
+            if percentual_alvo_volumoso is not None
+            else cls.PERCENTUAL_ALVO_VOLUMOSO
+        )
 
         x_alvo = cls._x_alvo_heuristico(configuracoes, alvo_vol)
-        bounds  = [(c.limite_min, c.limite_max) for c in configuracoes]
+        bounds = cls._bounds_geracao(
+            configuracoes=configuracoes,
+            soma_total=1.0,
+            percentual_volumoso=alvo_vol,
+        )
+        mascara_volumoso = cls._mascara_volumoso(configuracoes)
 
         return cls._resolver(
             n=n,
@@ -138,6 +149,8 @@ class MotorAdequacao:
             bounds_sub=bounds,
             soma_alvo=1.0,
             contrib_fixas=np.zeros(len(NUTRIENTES_ORDEM)),
+            mascara_volumoso_sub=mascara_volumoso,
+            soma_volumoso_alvo=alvo_vol,
         )
 
     @classmethod
@@ -161,35 +174,55 @@ class MotorAdequacao:
         resultado não-convergido — MotorAlertas emitirá alerta.
         """
         n = len(participacao_atual)
+        if len(configuracoes) != n:
+            raise ValueError(
+                "A quantidade de configurações deve corresponder à quantidade "
+                "de ingredientes da participação."
+            )
+        cls._validar_dimensoes(matriz_M, n)
+
         mascara_travados = participacao_atual.mascara_travados()
         mascara_livres   = participacao_atual.mascara_livres()
-
-        espaco_livre = participacao_atual.espaco_livre()
-        if espaco_livre <= 1e-9:
-            return ResultadoDistribuicao(
-                fracoes=participacao_atual.fracoes.copy(),
-                convergiu=False,
-                mensagem=(
-                    f"Espaço livre = {espaco_livre:.4f}: participações travadas "
-                    f"já somam {participacao_atual.soma_travados()*100:.1f}%. "
-                    "Destravar algum ingrediente para redistribuir."
-                ),
-            )
-
         indices_livres = np.where(mascara_livres)[0]
         n_livres = len(indices_livres)
 
+        espaco_livre = participacao_atual.espaco_livre()
+        if espaco_livre < -1e-9:
+            raise ValueError(
+                f"Redistribuição inviável: as participações travadas somam "
+                f"{participacao_atual.soma_travados() * 100:.2f}%, acima de 100%."
+            )
+
         if n_livres == 0:
+            if abs(espaco_livre) > 1e-9:
+                raise ValueError(
+                    "Redistribuição inviável: todos os ingredientes estão "
+                    "travados e a soma não fecha em 100%."
+                )
             return ResultadoDistribuicao(
                 fracoes=participacao_atual.fracoes.copy(),
                 convergiu=True,
                 mensagem="Nenhum ingrediente livre para redistribuir.",
             )
 
-        # Caso trivial: único ingrediente livre
+        if espaco_livre <= 1e-9:
+            raise ValueError(
+                "Redistribuição inviável: não há espaço para os ingredientes "
+                "livres. Reduza ou destrave uma participação manual."
+            )
+
+        # Caso trivial: único ingrediente livre. Ainda assim, os limites são
+        # rígidos; uma sobra acima do máximo deve rejeitar a operação.
         if n_livres == 1:
+            idx_livre = int(indices_livres[0])
+            cfg_livre = configuracoes[idx_livre]
+            cls._projetar_soma(
+                np.array([espaco_livre], dtype=float),
+                espaco_livre,
+                [(cfg_livre.limite_min, cfg_livre.limite_max)],
+            )
             fracoes_resultado = participacao_atual.fracoes.copy()
-            fracoes_resultado[indices_livres[0]] = espaco_livre
+            fracoes_resultado[idx_livre] = espaco_livre
             return ResultadoDistribuicao(
                 fracoes=fracoes_resultado,
                 convergiu=True,
@@ -210,13 +243,39 @@ class MotorAdequacao:
         # escalada para o novo espaço livre (princípio de menor mudança)
         fracoes_livres_atuais = participacao_atual.fracoes[indices_livres]
         soma_livres_atual = fracoes_livres_atuais.sum()
-        alvo_vol = (
+        alvo_vol = cls._normalizar_percentual_volumoso(
             percentual_alvo_volumoso
             if percentual_alvo_volumoso is not None
             else cls.PERCENTUAL_ALVO_VOLUMOSO
         )
+
+        soma_volumoso_alvo = None
+        percentual_volumoso_livre = alvo_vol
+        if reiniciar_livres and percentual_alvo_volumoso is not None:
+            mascara_volumoso_total = cls._mascara_volumoso(configuracoes)
+            volumoso_travado = float(
+                participacao_atual.fracoes[mascara_travados & mascara_volumoso_total].sum()
+            )
+            soma_volumoso_alvo = alvo_vol - volumoso_travado
+            if (
+                soma_volumoso_alvo < -1e-9
+                or soma_volumoso_alvo > espaco_livre + 1e-9
+            ):
+                raise ValueError(
+                    "Alvo de volumoso inviável: os ingredientes travados já "
+                    "ocupam uma participação incompatível com o alvo informado."
+                )
+            soma_volumoso_alvo = min(
+                espaco_livre,
+                max(0.0, soma_volumoso_alvo),
+            )
+            percentual_volumoso_livre = soma_volumoso_alvo / espaco_livre
+
         if reiniciar_livres:
-            x_alvo_livres = cls._x_alvo_heuristico(cfg_livres, alvo_vol)
+            x_alvo_livres = cls._x_alvo_heuristico(
+                cfg_livres,
+                percentual_volumoso_livre,
+            )
             x_alvo_livres = x_alvo_livres * espaco_livre
         elif soma_livres_atual > 1e-9:
             x_alvo_livres = fracoes_livres_atuais / soma_livres_atual * espaco_livre
@@ -224,23 +283,44 @@ class MotorAdequacao:
             x_alvo_livres = cls._x_alvo_heuristico(cfg_livres, alvo_vol)
             x_alvo_livres = x_alvo_livres * espaco_livre
 
-        # Bounds dinâmicos: limite de variação máxima por iteração
+        bounds_geracao = None
+        if reiniciar_livres:
+            bounds_geracao = cls._bounds_geracao(
+                configuracoes=cfg_livres,
+                soma_total=espaco_livre,
+                percentual_volumoso=percentual_volumoso_livre,
+            )
+
+        # Os limites cadastrados são rígidos. A menor mudança possível fica
+        # no objetivo do solver; não vira bound porque isso poderia impedir
+        # o fechamento em 100% depois de um travamento manual amplo.
         bounds_livres = []
         for i, idx_global in enumerate(indices_livres):
             cfg = configuracoes[idx_global]
             fracao_atual = participacao_atual.fracoes[idx_global]
             if reiniciar_livres:
+                lo, hi = bounds_geracao[i]
+                hi = min(hi, espaco_livre)
+            else:
                 lo = cfg.limite_min
                 hi = min(cfg.limite_max, espaco_livre)
-            else:
-                lo = max(cfg.limite_min, fracao_atual - cls.VARIACAO_MAX_POR_ITERACAO)
-                hi = min(
-                    min(cfg.limite_max, espaco_livre),
-                    fracao_atual + cls.VARIACAO_MAX_POR_ITERACAO,
+                if fracao_atual <= 1e-12 and hi > 0.0:
+                    lo = max(
+                        lo,
+                        min(
+                            cls.MINIMO_TECNICO_GERACAO,
+                            espaco_livre / (2.0 * n_livres),
+                            hi,
+                        ),
+                    )
+            if lo > hi + 1e-12:
+                raise ValueError(
+                    "Redistribuição inviável: o limite mínimo de um ingrediente "
+                    "é maior que o espaço disponível."
                 )
-            # Garante lo <= hi (pode ocorrer se fracao_atual == 0)
-            lo = min(lo, hi)
             bounds_livres.append((lo, hi))
+
+        mascara_volumoso_livres = cls._mascara_volumoso(cfg_livres)
 
         resultado_livres = cls._resolver(
             n=n_livres,
@@ -250,6 +330,8 @@ class MotorAdequacao:
             bounds_sub=bounds_livres,
             soma_alvo=espaco_livre,
             contrib_fixas=contrib_fixas,
+            mascara_volumoso_sub=mascara_volumoso_livres,
+            soma_volumoso_alvo=soma_volumoso_alvo,
         )
 
         # Recompor vetor completo
@@ -276,6 +358,8 @@ class MotorAdequacao:
         bounds_sub: list[tuple[float, float]],
         soma_alvo: float,
         contrib_fixas: np.ndarray,
+        mascara_volumoso_sub: np.ndarray | None = None,
+        soma_volumoso_alvo: float | None = None,
     ) -> ResultadoDistribuicao:
         """
         Núcleo do otimizador. Opera apenas sobre o subconjunto de
@@ -287,10 +371,17 @@ class MotorAdequacao:
         """
         def objetivo(x: np.ndarray) -> float:
             diff = x - x_alvo_sub
-            return float(diff @ diff)
-
-        def grad_objetivo(x: np.ndarray) -> np.ndarray:
-            return 2.0 * (x - x_alvo_sub)
+            desvio_distribuicao = float(diff @ diff)
+            desvio_nutricional = cls._penalidade_nutricional(
+                x=x,
+                matriz_M_sub=matriz_M_sub,
+                requisitos=requisitos,
+                contrib_fixas=contrib_fixas,
+            )
+            return (
+                desvio_distribuicao
+                + cls.PESO_ADEQUACAO_NUTRICIONAL * desvio_nutricional
+            )
 
         constraints = [
             {
@@ -299,44 +390,42 @@ class MotorAdequacao:
                 "jac": lambda x: np.ones(n),
             }
         ]
-
-        for nutriente, requisito in requisitos.items():
-            lo, hi = requisito.limites_lp()
-
-            if nutriente == Nutriente.CA_P:
-                cls._adicionar_restricoes_relacao_ca_p(
-                    constraints=constraints,
-                    matriz_M_sub=matriz_M_sub,
-                    contrib_fixas=contrib_fixas,
-                    lo=lo,
-                    hi=hi,
-                )
-                continue
-
-            idx  = NUTRIENTES_ORDEM.index(nutriente)
-            coef = matriz_M_sub[:, idx]           # % da MS por ingrediente
-            fixa = float(contrib_fixas[idx])       # contribuição travada
-
-            cls._adicionar_restricoes_limite(
-                constraints=constraints,
-                coef=coef,
-                fixa=fixa,
-                lo=lo,
-                hi=hi,
+        alvo_volumoso_validado = None
+        if soma_volumoso_alvo is not None and mascara_volumoso_sub is not None:
+            alvo_viavel = cls._validar_soma_subgrupo_viavel(
+                bounds_sub=bounds_sub,
+                mascara=mascara_volumoso_sub,
+                soma_alvo=soma_volumoso_alvo,
+                soma_total_alvo=soma_alvo,
+                nome="volumoso",
             )
+            alvo_volumoso_validado = alvo_viavel
+            if np.any(mascara_volumoso_sub) and not np.all(mascara_volumoso_sub):
+                coef_vol = mascara_volumoso_sub.astype(float)
+                constraints.append({
+                    "type": "eq",
+                    "fun": lambda x, c=coef_vol, alvo=alvo_viavel: float(c @ x) - alvo,
+                    "jac": lambda x, c=coef_vol: c,
+                })
 
         bounds = Bounds(
             lb=[b[0] for b in bounds_sub],
             ub=[b[1] for b in bounds_sub],
         )
 
-        # Ponto inicial: x_alvo projetado para satisfazer a soma
-        x0 = cls._projetar_soma(x_alvo_sub.copy(), soma_alvo, bounds_sub)
+        # O ponto inicial já satisfaz todas as regras estruturais. Isso também
+        # fornece um fallback válido se o otimizador numérico falhar.
+        x0 = cls._projetar_estrutura(
+            x=x_alvo_sub.copy(),
+            soma_alvo=soma_alvo,
+            bounds=bounds_sub,
+            mascara_subgrupo=mascara_volumoso_sub,
+            soma_subgrupo_alvo=alvo_volumoso_validado,
+        )
 
         resultado = minimize(
             objetivo,
             x0=x0,
-            jac=grad_objetivo,
             method="SLSQP",
             bounds=bounds,
             constraints=constraints,
@@ -344,135 +433,40 @@ class MotorAdequacao:
         )
 
         if resultado.success:
-            fracoes = np.clip(resultado.x, 0.0, 1.0)
-            fracoes = cls._normalizar_soma_exata(fracoes, soma_alvo)
+            fracoes = cls._projetar_estrutura(
+                x=resultado.x,
+                soma_alvo=soma_alvo,
+                bounds=bounds_sub,
+                mascara_subgrupo=mascara_volumoso_sub,
+                soma_subgrupo_alvo=alvo_volumoso_validado,
+            )
             return ResultadoDistribuicao(
                 fracoes=fracoes,
                 convergiu=True,
-                mensagem=f"SLSQP convergiu em {resultado.nit} iterações.",
+                mensagem=(
+                    f"Distribuição estrutural válida gerada em {resultado.nit} "
+                    "iterações; desvios nutricionais são informados por alertas."
+                ),
             )
 
-        # Fallback: nnls sobre x_alvo, normalizado para soma_alvo
-        fracoes_fallback = cls._fallback_nnls(
-            matriz_M_sub, requisitos, contrib_fixas, soma_alvo, bounds_sub
-        )
-        fracoes_fallback = cls._normalizar_soma_exata(fracoes_fallback, soma_alvo)
         return ResultadoDistribuicao(
-            fracoes=fracoes_fallback,
+            fracoes=x0,
             convergiu=False,
             mensagem=(
                 f"SLSQP não convergiu ({resultado.message}). "
-                "Usando nnls como fallback — alertas indicarão restrições violadas."
+                "Mantida a distribuição-alvo projetada dentro de todas as regras estruturais."
             ),
         )
 
     @staticmethod
-    def _normalizar_soma_exata(fracoes: np.ndarray, soma_alvo: float) -> np.ndarray:
-        """
-        Garante, por construção (divisão), que sum(fracoes) == soma_alvo
-        — não por tolerância de solver.
-
-        Por que isso é necessário mesmo com SLSQP "convergindo": o
-        ftol do SLSQP (1e-9) e principalmente o np.clip(x, 0, 1) logo
-        após a solução podem deixar um resíduo na soma sempre que
-        algum componente satura em 0 ou 1 (ex.: um ingrediente que o
-        solver queria deixar levemente negativo por erro numérico).
-        Sem renormalizar depois do clip, esse resíduo se propaga pra
-        soma final e pode aparecer como 99,xx% ou 100,xx% em vez de
-        100,00% — exatamente o que este método elimina.
-
-        REGRA DE NEGÓCIO EXPLÍCITA: soma = soma_alvo é um invariante
-        RÍGIDO (nunca aproximado) — prioridade maior que qualquer
-        bound de inclusão ou meta nutricional, que continuam
-        "melhor esforço". Em casos extremos, esta normalização pode
-        empurrar um componente uma fração de ponto percentual além do
-        seu limite de inclusão configurado; isso é aceito
-        deliberadamente pela regra "a soma nunca pode ultrapassar
-        100%, em hipótese alguma".
-        """
-        n = len(fracoes)
-        if n == 0:
-            return fracoes
-        soma_atual = float(fracoes.sum())
-        if soma_atual <= 1e-12:
-            return np.full(n, soma_alvo / n, dtype=float)
-        return fracoes * (soma_alvo / soma_atual)
-
-    @staticmethod
-    def _adicionar_restricoes_limite(
-        constraints: list[dict],
-        coef: np.ndarray,
-        fixa: float,
-        lo: float | None,
-        hi: float | None,
-    ) -> None:
-        if lo is not None:
-            rhs_lo = lo - fixa
-            constraints.append({
-                "type": "ineq",
-                "fun": lambda x, c=coef, r=rhs_lo: float(c @ x) - r,
-                "jac": lambda x, c=coef: c,
-            })
-        if hi is not None:
-            rhs_hi = hi - fixa
-            constraints.append({
-                "type": "ineq",
-                "fun": lambda x, c=coef, r=rhs_hi: r - float(c @ x),
-                "jac": lambda x, c=coef: -c,
-            })
-
-    @staticmethod
-    def _adicionar_restricoes_relacao_ca_p(
-        constraints: list[dict],
-        matriz_M_sub: np.ndarray,
-        contrib_fixas: np.ndarray,
-        lo: float | None,
-        hi: float | None,
-    ) -> None:
-        idx_ca = indice_de(Nutriente.CA)
-        idx_p = indice_de(Nutriente.P)
-
-        coef_ca = matriz_M_sub[:, idx_ca]
-        coef_p = matriz_M_sub[:, idx_p]
-        fixa_ca = float(contrib_fixas[idx_ca])
-        fixa_p = float(contrib_fixas[idx_p])
-
-        if lo is not None:
-            coef = coef_ca - (lo * coef_p)
-            fixa = fixa_ca - (lo * fixa_p)
-            constraints.append({
-                "type": "ineq",
-                "fun": lambda x, c=coef, f=fixa: float(c @ x) + f,
-                "jac": lambda x, c=coef: c,
-            })
-
-        if hi is not None:
-            coef = coef_ca - (hi * coef_p)
-            fixa = fixa_ca - (hi * fixa_p)
-            constraints.append({
-                "type": "ineq",
-                "fun": lambda x, c=coef, f=fixa: -(float(c @ x) + f),
-                "jac": lambda x, c=coef: -c,
-            })
-
-    @staticmethod
-    def _fallback_nnls(
+    def _penalidade_nutricional(
+        x: np.ndarray,
         matriz_M_sub: np.ndarray,
         requisitos: dict[Nutriente, RequisitoNutriente],
         contrib_fixas: np.ndarray,
-        soma_alvo: float,
-        bounds_sub: list[tuple[float, float]],
-    ) -> np.ndarray:
-        """
-        Aproximação via nnls: encontra x >= 0 que minimiza
-        ‖A x - b‖² onde A são os coeficientes nutricionais e
-        b são os limites mínimos, depois normaliza para soma_alvo.
-
-        Não garante satisfação das restrições — serve apenas para
-        fornecer uma solução "de menor violação" quando SLSQP falha.
-        """
-        n = matriz_M_sub.shape[0]
-        linhas_A, linhas_b = [], []
+    ) -> float:
+        penalidade = 0.0
+        totais = x @ matriz_M_sub + contrib_fixas
 
         for nutriente, requisito in requisitos.items():
             lo, hi = requisito.limites_lp()
@@ -480,67 +474,43 @@ class MotorAdequacao:
             if nutriente == Nutriente.CA_P:
                 idx_ca = indice_de(Nutriente.CA)
                 idx_p = indice_de(Nutriente.P)
-                coef_ca = matriz_M_sub[:, idx_ca]
-                coef_p = matriz_M_sub[:, idx_p]
-                fixa_ca = float(contrib_fixas[idx_ca])
-                fixa_p = float(contrib_fixas[idx_p])
+                valor = totais[idx_ca] / totais[idx_p] if totais[idx_p] > 1e-12 else 0.0
+            else:
+                valor = totais[NUTRIENTES_ORDEM.index(nutriente)]
 
-                if lo is not None:
-                    linhas_A.append(coef_ca - (lo * coef_p))
-                    linhas_b.append(-(fixa_ca - (lo * fixa_p)))
-                if hi is not None:
-                    linhas_A.append(-(coef_ca - (hi * coef_p)))
-                    linhas_b.append(fixa_ca - (hi * fixa_p))
-                continue
+            if lo is not None and valor < lo:
+                escala = max(abs(lo), 1.0)
+                penalidade += ((lo - valor) / escala) ** 2
+            if hi is not None and valor > hi:
+                escala = max(abs(hi), 1.0)
+                penalidade += ((valor - hi) / escala) ** 2
 
-            idx  = NUTRIENTES_ORDEM.index(nutriente)
-            coef = matriz_M_sub[:, idx]
-            fixa = float(contrib_fixas[idx])
-
-            if lo is not None:
-                linhas_A.append(coef)
-                linhas_b.append(lo - fixa)
-            if hi is not None:
-                linhas_A.append(-coef)
-                linhas_b.append(-(hi - fixa))
-
-        if linhas_A:
-            A = np.vstack(linhas_A)
-            b = np.array(linhas_b, dtype=float)
-            x_nnls, _ = nnls(A, b)
-        else:
-            x_nnls = np.ones(n, dtype=float)
-
-        # Normalizar para soma_alvo respeitando os bounds
-        soma = x_nnls.sum()
-        if soma > 1e-9:
-            x_norm = x_nnls / soma * soma_alvo
-        else:
-            x_norm = np.full(n, soma_alvo / n)
-
-        # Clip para bounds
-        x_clipped = np.array([
-            np.clip(x_norm[i], bounds_sub[i][0], bounds_sub[i][1])
-            for i in range(n)
-        ])
-
-        # Re-normalizar após clip
-        soma_clip = x_clipped.sum()
-        if soma_clip > 1e-9:
-            x_clipped = x_clipped / soma_clip * soma_alvo
-
-        return x_clipped
+        return float(penalidade)
 
     @staticmethod
+    def _validar_dimensoes(matriz_M: np.ndarray, n_ingredientes: int) -> None:
+        if matriz_M.ndim != 2 or matriz_M.shape[0] != n_ingredientes:
+            raise ValueError(
+                "A matriz nutricional deve possuir uma linha para cada ingrediente."
+            )
+        if matriz_M.shape[1] != len(NUTRIENTES_ORDEM):
+            raise ValueError(
+                "A matriz nutricional não segue a ordem canônica de nutrientes."
+            )
+
+    @classmethod
     def _x_alvo_heuristico(
+        cls,
         configuracoes: list[ConfiguracaoIngrediente],
         percentual_volumoso: float,
     ) -> np.ndarray:
         """
         Distribuição-alvo heurística:
-        - Volumosos dividem `percentual_volumoso` uniformemente.
-        - Concentrados dividem `1 - percentual_volumoso` uniformemente.
-        - Se só existir uma classe, distribui uniformemente entre todos.
+        - Volumosos dividem o orçamento da classe uniformemente.
+        - Concentrados recebem pesos por função (energético, proteico,
+          mineral e aditivo), evitando uma divisão inicial artificialmente
+          igual entre milho, ureia e calcário.
+        - Se só existir uma classe, ela ocupa toda a formulação.
         """
         n = len(configuracoes)
         idx_vol  = [i for i, c in enumerate(configuracoes) if c.classificacao == "VOLUMOSO"]
@@ -549,15 +519,173 @@ class MotorAdequacao:
         x = np.zeros(n, dtype=float)
 
         if idx_vol and idx_conc:
-            for i in idx_vol:
-                x[i] = percentual_volumoso / len(idx_vol)
-            for i in idx_conc:
-                x[i] = (1.0 - percentual_volumoso) / len(idx_conc)
+            cls._distribuir_orcamento(x, idx_vol, percentual_volumoso, configuracoes)
+            cls._distribuir_orcamento(x, idx_conc, 1.0 - percentual_volumoso, configuracoes)
+        elif idx_vol:
+            cls._distribuir_orcamento(x, idx_vol, 1.0, configuracoes)
         else:
-            # Só uma classe: distribui uniformemente
-            x[:] = 1.0 / n
+            cls._distribuir_orcamento(x, idx_conc, 1.0, configuracoes)
 
         return x
+
+    @classmethod
+    def _distribuir_orcamento(
+        cls,
+        destino: np.ndarray,
+        indices: list[int],
+        orcamento: float,
+        configuracoes: list[ConfiguracaoIngrediente],
+    ) -> None:
+        if not indices or orcamento <= 0.0:
+            return
+
+        pesos = np.array([
+            1.0
+            if configuracoes[i].classificacao == "VOLUMOSO"
+            else cls.PESOS_HEURISTICOS_TIPO.get(
+                configuracoes[i].tipo,
+                cls.PESOS_HEURISTICOS_TIPO["OUTRO"],
+            )
+            for i in indices
+        ], dtype=float)
+        pesos /= pesos.sum()
+        destino[indices] = pesos * orcamento
+
+    @staticmethod
+    def _normalizar_percentual_volumoso(valor: float) -> float:
+        valor = float(valor)
+        valor = valor / 100.0 if valor > 1.0 else valor
+        return max(0.0, min(1.0, valor))
+
+    @staticmethod
+    def _mascara_volumoso(configuracoes: list[ConfiguracaoIngrediente]) -> np.ndarray:
+        return np.array([c.classificacao == "VOLUMOSO" for c in configuracoes], dtype=bool)
+
+    @classmethod
+    def _bounds_geracao(
+        cls,
+        configuracoes: list[ConfiguracaoIngrediente],
+        soma_total: float,
+        percentual_volumoso: float | None,
+    ) -> list[tuple[float, float]]:
+        """Aplica um piso técnico aos ingredientes selecionados quando viável."""
+        if not configuracoes:
+            return []
+
+        mascara_vol = cls._mascara_volumoso(configuracoes)
+        tem_vol = bool(np.any(mascara_vol))
+        tem_conc = bool(np.any(~mascara_vol))
+
+        if tem_vol and tem_conc and percentual_volumoso is not None:
+            orcamentos = {
+                True: soma_total * percentual_volumoso,
+                False: soma_total * (1.0 - percentual_volumoso),
+            }
+        elif tem_vol:
+            orcamentos = {True: soma_total, False: 0.0}
+        else:
+            orcamentos = {True: 0.0, False: soma_total}
+
+        bounds = [
+            [config.limite_min, min(config.limite_max, soma_total)]
+            for config in configuracoes
+        ]
+        for e_volumoso, orcamento in orcamentos.items():
+            indices = [
+                i for i, marcado in enumerate(mascara_vol)
+                if bool(marcado) is e_volumoso and bounds[i][1] > 0.0
+            ]
+            if not indices or orcamento <= 0.0:
+                continue
+
+            piso = min(
+                cls.MINIMO_TECNICO_GERACAO,
+                orcamento / (2.0 * len(indices)),
+            )
+            for i in indices:
+                bounds[i][0] = max(bounds[i][0], min(piso, bounds[i][1]))
+
+        return [(float(lo), float(hi)) for lo, hi in bounds]
+
+    @staticmethod
+    def _validar_soma_subgrupo_viavel(
+        bounds_sub: list[tuple[float, float]],
+        mascara: np.ndarray,
+        soma_alvo: float,
+        soma_total_alvo: float,
+        nome: str,
+    ) -> float:
+        if not np.any(mascara):
+            if abs(soma_alvo) <= 1e-9:
+                return 0.0
+            raise ValueError(f"Nenhum ingrediente {nome} foi selecionado para atingir o alvo.")
+
+        if np.all(mascara):
+            if abs(soma_alvo - soma_total_alvo) <= 1e-9:
+                return soma_alvo
+            raise ValueError(
+                f"Alvo de {nome} inviável: todos os ingredientes selecionados "
+                f"são {nome}s, portanto eles precisam ocupar "
+                f"{soma_total_alvo * 100:.2f}% da formulação."
+            )
+
+        minimo = sum(bounds_sub[i][0] for i, marcado in enumerate(mascara) if marcado)
+        maximo = sum(bounds_sub[i][1] for i, marcado in enumerate(mascara) if marcado)
+        if soma_alvo < minimo - 1e-9 or soma_alvo > maximo + 1e-9:
+            raise ValueError(
+                f"Alvo de {nome} inviável: solicitado {soma_alvo * 100:.2f}%, "
+                f"mas os limites permitem de {minimo * 100:.2f}% a {maximo * 100:.2f}%."
+            )
+        minimo_complemento = sum(
+            bounds_sub[i][0] for i, marcado in enumerate(mascara) if not marcado
+        )
+        maximo_complemento = sum(
+            bounds_sub[i][1] for i, marcado in enumerate(mascara) if not marcado
+        )
+        alvo_complemento = soma_total_alvo - soma_alvo
+        if (
+            alvo_complemento < minimo_complemento - 1e-9
+            or alvo_complemento > maximo_complemento + 1e-9
+        ):
+            raise ValueError(
+                f"Alvo de {nome} inviável: o restante da fórmula precisa somar "
+                f"{alvo_complemento * 100:.2f}%, mas os limites permitem de "
+                f"{minimo_complemento * 100:.2f}% a {maximo_complemento * 100:.2f}%."
+            )
+        return soma_alvo
+
+    @classmethod
+    def _projetar_estrutura(
+        cls,
+        x: np.ndarray,
+        soma_alvo: float,
+        bounds: list[tuple[float, float]],
+        mascara_subgrupo: np.ndarray | None,
+        soma_subgrupo_alvo: float | None,
+    ) -> np.ndarray:
+        """Projeta soma total e, quando aplicável, a soma do subgrupo."""
+        if (
+            mascara_subgrupo is None
+            or soma_subgrupo_alvo is None
+            or not np.any(mascara_subgrupo)
+            or np.all(mascara_subgrupo)
+        ):
+            return cls._projetar_soma(x, soma_alvo, bounds)
+
+        mascara = np.asarray(mascara_subgrupo, dtype=bool)
+        complemento = ~mascara
+        resultado = np.zeros_like(np.asarray(x, dtype=float))
+        resultado[mascara] = cls._projetar_soma(
+            np.asarray(x, dtype=float)[mascara],
+            soma_subgrupo_alvo,
+            [bounds[i] for i in np.where(mascara)[0]],
+        )
+        resultado[complemento] = cls._projetar_soma(
+            np.asarray(x, dtype=float)[complemento],
+            soma_alvo - soma_subgrupo_alvo,
+            [bounds[i] for i in np.where(complemento)[0]],
+        )
+        return resultado
 
     @staticmethod
     def _projetar_soma(
@@ -569,14 +697,60 @@ class MotorAdequacao:
         Projeta x para que sum(x) == soma_alvo, respeitando os bounds.
         Usado para fornecer um x0 viável ao SLSQP.
         """
-        # Clip para bounds primeiro
-        x = np.array([
-            np.clip(x[i], bounds[i][0], bounds[i][1])
-            for i in range(len(x))
-        ])
-        soma = x.sum()
-        if soma < 1e-9:
-            n = len(x)
-            x = np.array([soma_alvo / n] * n)
+        n = len(x)
+        if n == 0:
             return x
-        return x / soma * soma_alvo
+
+        lbs = np.array([b[0] for b in bounds], dtype=float)
+        ubs = np.array([b[1] for b in bounds], dtype=float)
+        min_soma = float(lbs.sum())
+        max_soma = float(ubs.sum())
+        if soma_alvo < min_soma - 1e-9 or soma_alvo > max_soma + 1e-9:
+            raise ValueError(
+                f"Soma alvo inviável: precisa fechar {soma_alvo * 100:.2f}%, "
+                f"mas os limites dos ingredientes permitem de "
+                f"{min_soma * 100:.2f}% a {max_soma * 100:.2f}%."
+            )
+
+        x = np.clip(np.asarray(x, dtype=float), lbs, ubs)
+        for _ in range(100):
+            residual = float(soma_alvo - x.sum())
+            if abs(residual) <= 1e-12:
+                break
+
+            if residual > 0:
+                capacidade = ubs - x
+                livres = capacidade > 1e-12
+                total_capacidade = float(capacidade[livres].sum())
+                if total_capacidade <= 1e-12:
+                    break
+                incremento = np.minimum(
+                    capacidade[livres],
+                    capacidade[livres] / total_capacidade * residual,
+                )
+                x[livres] += incremento
+            else:
+                capacidade = x - lbs
+                livres = capacidade > 1e-12
+                total_capacidade = float(capacidade[livres].sum())
+                if total_capacidade <= 1e-12:
+                    break
+                decremento = np.minimum(
+                    capacidade[livres],
+                    capacidade[livres] / total_capacidade * (-residual),
+                )
+                x[livres] -= decremento
+
+        residual = float(soma_alvo - x.sum())
+        if abs(residual) > 1e-12:
+            if residual > 0:
+                livres = np.where((ubs - x) >= residual - 1e-10)[0]
+            else:
+                livres = np.where((x - lbs) >= (-residual) - 1e-10)[0]
+            if len(livres):
+                x[livres[0]] += residual
+
+        x = np.clip(x, lbs, ubs)
+        if abs(float(x.sum()) - soma_alvo) > 1e-10:
+            raise RuntimeError("Falha interna ao projetar participações para a soma alvo.")
+        return x

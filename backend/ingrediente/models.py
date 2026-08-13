@@ -1,7 +1,11 @@
-""" models do app de ingrediente"""
+"""Catálogo nutricional e preços particulares de ingredientes.
+
+Ingredientes Valadares são compartilhados e somente leitura. Ingredientes
+customizados pertencem a um usuário. Preços ficam em uma tabela separada para
+que cada produtor possa manter valores regionais sem alterar o catálogo comum.
+"""
 
 from django.db import models
-import numpy as np
 from accounts.models import Usuario
 
 # pylint: disable= no-member, too-few-public-methods
@@ -39,8 +43,8 @@ class Ingrediente(models.Model):
     """
     Ingrediente para formulação de dietas ovinas.
 
-    - fonte_valadares=True  →  ingrediente da base do excel, read-only
-    - fonte_valadares=False →  ingrediente customizado pelo usuário
+    ``fonte_valadares=True`` identifica linhas públicas importadas da tabela.
+    As demais linhas são customizadas e devem ter um usuário proprietário.
     """
 
     usuario = models.ForeignKey(
@@ -106,7 +110,7 @@ class Ingrediente(models.Model):
     dt_atualizacao = models.DateTimeField(auto_now=True)
 
     class Meta:
-        '''classe meta, define o nome do model e a ordenação padrão'''
+        """Ordena o catálogo por classe, tipo e nome para facilitar seleção."""
         verbose_name          = 'Ingrediente'
         verbose_name_plural   = 'Ingredientes'
         ordering              = ['classificacao', 'tipo', 'nome']
@@ -116,11 +120,13 @@ class Ingrediente(models.Model):
         ]
 
     def __str__(self):
+        """Mostra nome, tipo e origem do ingrediente em listas administrativas."""
         origem = 'Valadares' if self.fonte_valadares else 'Custom'
         return f'{self.nome} [{self.get_tipo_display()} / {origem}]'
 
 
 class OrigemAlteracaoPrecoChoices(models.TextChoices):
+    """Indica se o preço veio do catálogo pessoal ou de uma formulação."""
     CATALOGO   = "CATALOGO",   "Banco de preços do usuário"
     FORMULACAO = "FORMULACAO", "Override local (uma receita)"
 
@@ -155,6 +161,7 @@ class PrecoIngredienteUsuario(models.Model):
     dt_atualizacao = models.DateTimeField(auto_now=True)
 
     class Meta:
+        """Garante um único preço regional por usuário e ingrediente."""
         verbose_name        = 'Preço de Ingrediente (usuário)'
         verbose_name_plural  = 'Preços de Ingredientes (usuário)'
         constraints = [
@@ -165,11 +172,12 @@ class PrecoIngredienteUsuario(models.Model):
         ]
 
     def __str__(self):
+        """Resume ingrediente, usuário e preço para auditoria administrativa."""
         return f'{self.ingrediente.nome} — {self.usuario} — R$ {self.preco_kg_mn:.2f}/kg'
 
 
 class HistoricoPrecoIngrediente(models.Model):
-    """Auditoria de alteração de preço — sempre no contexto de um usuário."""
+    """Registro imutável de uma alteração de preço feita por um usuário."""
     ingrediente = models.ForeignKey(
         Ingrediente,
         on_delete=models.CASCADE,
@@ -190,10 +198,7 @@ class HistoricoPrecoIngrediente(models.Model):
     dt_alteracao = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        """Exibe primeiro as alterações de preço mais recentes."""
         verbose_name         = 'Histórico de Preço'
         verbose_name_plural   = 'Históricos de Preço'
         ordering              = ['-dt_alteracao']
-
-    def to_vetor_nutricional(self):
-        """Retorna array numpy com [pb, ndt, fdn, ee, ca, p] em %."""
-        return np.array([self.pb, self.ndt, self.fdn, self.ee, self.ca, self.p])

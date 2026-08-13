@@ -21,5 +21,9 @@ reuniao.md
 *.pot
 *.pyc
 __pycache__/
+*.py[cod]
+.env
+frontend/.env.local
+frontend/dist/
 
 

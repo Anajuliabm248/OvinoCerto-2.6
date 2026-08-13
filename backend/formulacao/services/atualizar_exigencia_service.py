@@ -28,6 +28,7 @@ from formulacao.repositories import EventoRepository, ExigenciaRepository
 
 
 class AtualizarExigenciaService:
+    """Altera um requisito da cópia configurada e recalcula a formulação."""
 
     @staticmethod
     @transaction.atomic

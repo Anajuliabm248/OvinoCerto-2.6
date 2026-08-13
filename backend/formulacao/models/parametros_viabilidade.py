@@ -24,6 +24,7 @@ from .formulacao import Formulacao
 
 
 class ParametrosViabilidade(models.Model):
+    """Guarda um cenário econômico editável sem alterar lote ou exigência NRC."""
 
     formulacao = models.OneToOneField(
         Formulacao,
@@ -72,8 +73,10 @@ class ParametrosViabilidade(models.Model):
     dt_alteracao = models.DateTimeField(auto_now=True)
 
     class Meta:
+        """Usa o mesmo nome no singular e plural nas telas administrativas."""
         verbose_name = "Parâmetros de Viabilidade"
         verbose_name_plural = "Parâmetros de Viabilidade"
 
     def __str__(self):
+        """Identifica o cenário pelo número da formulação relacionada."""
         return f"Viabilidade — Formulação #{self.formulacao_id}"

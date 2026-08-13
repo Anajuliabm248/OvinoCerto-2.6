@@ -40,6 +40,10 @@ class TestConfiguracaoAPartirDoIngrediente:
         cfg = configuracao_a_partir_do_ingrediente(_ingrediente(classificacao="volumoso"))
         assert cfg.classificacao == "VOLUMOSO"
 
+    def test_tipo_e_repassado_normalizado_para_o_motor(self):
+        cfg = configuracao_a_partir_do_ingrediente(_ingrediente())
+        assert cfg.tipo == "MINERAL"
+
     def test_respeita_limite_min_customizado(self):
         # limite_min=0.05 (5%), mas ingrediente cadastrado com limite de 2%:
         # o limite_max nunca pode ficar abaixo do limite_min.

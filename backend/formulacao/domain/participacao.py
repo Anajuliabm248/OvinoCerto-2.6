@@ -103,12 +103,15 @@ class ParticipacaoVetor:
     # Consultas
 
     def __len__(self) -> int:
+        """Retorna quantos ingredientes estão representados no vetor."""
         return len(self.ids_ingredientes)
 
     def soma(self) -> float:
+        """Soma as frações em escala 0-1; uma dieta fechada retorna 1.0."""
         return float(np.sum(self.fracoes)) if len(self) else 0.0
 
     def soma_valida(self, tolerancia: float = TOLERANCIA_SOMA) -> bool:
+        """Confere se a dieta fecha em 100% dentro da tolerância informada."""
         return abs(self.soma() - 1.0) <= tolerancia
 
     def mascara_travados(self) -> np.ndarray:
@@ -119,13 +122,16 @@ class ParticipacaoVetor:
         )
 
     def mascara_livres(self) -> np.ndarray:
+        """Marca as posições que o algoritmo ainda pode redistribuir."""
         return ~self.mascara_travados()
 
     def soma_travados(self) -> float:
+        """Soma somente as participações fixadas manualmente pelo usuário."""
         mascara = self.mascara_travados()
         return float(np.sum(self.fracoes[mascara])) if len(self) else 0.0
 
     def soma_livres(self) -> float:
+        """Soma somente as participações disponíveis para cálculo automático."""
         mascara = self.mascara_livres()
         return float(np.sum(self.fracoes[mascara])) if len(self) else 0.0
 
@@ -170,6 +176,7 @@ class ParticipacaoVetor:
     # Serialização
 
     def to_dicts(self) -> list[dict]:
+        """Serializa IDs, frações e origens mantendo a ordem canônica."""
         return [
             {"id": id_, "fracao": float(fracao), "origem": origem.value}
             for id_, fracao, origem in zip(self.ids_ingredientes, self.fracoes, self.origens)

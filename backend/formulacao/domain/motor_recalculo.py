@@ -36,6 +36,7 @@ class ResultadoPorIngrediente:
     nutrientes_kg: VetorNutricional  # kg/dia de cada nutriente
 
     def to_dict(self) -> dict:
+        """Serializa a contribuição diária calculada para um ingrediente."""
         return {
             "id_ingrediente": self.id_ingrediente,
             "fracao_ms": self.fracao_ms,
@@ -58,6 +59,7 @@ class ResultadoRecalculo:
     cms_total_kg: float
 
     def to_dict(self) -> dict:
+        """Serializa a saída completa para persistência e resposta HTTP."""
         return {
             "cms_total_kg": self.cms_total_kg,
             "vetor_total_pct": self.vetor_total_pct.to_dict(),

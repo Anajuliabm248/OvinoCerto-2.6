@@ -7,8 +7,8 @@ que o MotorAdequacao usa ao (re)otimizar as participações CALCULADA.
 
 O MotorAdequacao é desacoplado do ORM (formulacao/engines/motor_adequacao.py);
 esta função faz a tradução Ingrediente (model) → ConfiguracaoIngrediente
-(dataclass de domínio), convertendo limite_max_participacao de percentual
-(0-100, como cadastrado pelo usuário) para fração (0-1, como o motor espera).
+(dataclass de domínio), incluindo classificação, tipo e o limite máximo
+convertido de percentual para fração.
 
 Ingredientes sem limite configurado (None) ou ausentes (registro órfão,
 ingrediente removido do catálogo) não recebem nenhuma restrição adicional
@@ -39,6 +39,7 @@ def configuracao_a_partir_do_ingrediente(
     classificacao = (
         (ingrediente.classificacao if ingrediente else "concentrado") or "concentrado"
     ).upper()
+    tipo = ((ingrediente.tipo if ingrediente else "outro") or "outro").upper()
 
     limite_max = 1.0
     if ingrediente is not None and ingrediente.limite_max_participacao is not None:
@@ -47,6 +48,7 @@ def configuracao_a_partir_do_ingrediente(
 
     return ConfiguracaoIngrediente(
         classificacao=classificacao,
+        tipo=tipo,
         limite_min=limite_min,
         limite_max=limite_max,
     )

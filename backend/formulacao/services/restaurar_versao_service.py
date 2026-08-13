@@ -37,6 +37,7 @@ from formulacao.services.recalcular_formulacao_service import RecalcularFormulac
 
 
 class RestaurarVersaoService:
+    """Recupera uma versão antiga e cria outra versão auditável com esse estado."""
 
     @staticmethod
     @transaction.atomic
@@ -45,6 +46,7 @@ class RestaurarVersaoService:
         versao_num: int,
         usuario_id: int | None = None,
     ) -> Formulacao:
+        """Aplica participações antigas, recalcula e registra uma nova versão."""
         # 1. Carrega snapshot
         from formulacao.models import SnapshotFormulacao
         try:
@@ -96,9 +98,6 @@ class RestaurarVersaoService:
 
         # IDs presentes no snapshot mas removidos da formulação (sem restauração possível)
         ids_ausentes = snap_ids - atuais_ids
-        if ids_ausentes:
-            # Não bloqueia — apenas registra no evento de auditoria.
-            pass
 
         # 6. Recalcula → novo snapshot
         motivo = f"restauração da versão {versao_num}"

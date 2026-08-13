@@ -52,6 +52,7 @@ from formulacao.repositories import (
 
 
 class RecalcularFormulacaoService:
+    """Orquestra adequação, custos, alertas, snapshot e evento em uma transação."""
 
     @staticmethod
     def executar(

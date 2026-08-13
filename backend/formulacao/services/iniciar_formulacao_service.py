@@ -29,6 +29,7 @@ from lote.models import Lote
 
 
 class IniciarFormulacaoService:
+    """Cria a formulação e copia a referência NRC sem alterar o catálogo."""
 
     @staticmethod
     @transaction.atomic

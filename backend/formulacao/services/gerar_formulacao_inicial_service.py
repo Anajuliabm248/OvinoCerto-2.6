@@ -40,6 +40,7 @@ from ingrediente.models import Ingrediente
 
 
 class GerarFormulacaoInicialService:
+    """Gera a primeira distribuição respeitando alvo, soma e limites rígidos."""
 
     @staticmethod
     @transaction.atomic
@@ -49,6 +50,7 @@ class GerarFormulacaoInicialService:
         usuario_id: int | None = None,
         percentual_alvo_volumoso: float = 0.50,
     ) -> Formulacao:
+        """Prepara os vetores, resolve a distribuição e persiste a formulação inicial."""
         formulacao = Formulacao.objects.get(pk=formulacao_id)
 
         if not ExigenciaConfigurada.objects.filter(formulacao_id=formulacao_id).exists():

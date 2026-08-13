@@ -1,4 +1,4 @@
-"""ViewSet para a tabela NRC de exigências nutricionais"""
+"""Consulta e manutenção administrativa da tabela de exigências NRC."""
 
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -25,11 +25,13 @@ class ExigenciaNRCViewSet(viewsets.ModelViewSet):
     serializer_class = ExigenciaNRCSerializer
 
     def get_permissions(self):
+        """Reserva alterações do catálogo a administradores autenticados."""
         if self.action in ('create', 'update', 'partial_update', 'destroy'):
             return [IsAdminUser()]
         return [IsAuthenticated()]
 
     def get_queryset(self):
+        """Lista a tabela NRC com filtros exatos de categoria e fase."""
         qs = ExigenciaNRC.objects.all()
 
         categoria = self.request.query_params.get('categoria', '')
@@ -84,6 +86,11 @@ class ExigenciaNRCViewSet(viewsets.ModelViewSet):
             pv_kg = float(pv_kg_str)
         except ValueError:
             return Response({'pv_kg': 'Deve ser um número.'}, status=status.HTTP_400_BAD_REQUEST)
+        if pv_kg <= 0:
+            return Response(
+                {'pv_kg': 'Deve ser maior que zero.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         gmd = None
         if gmd_str:
@@ -91,6 +98,11 @@ class ExigenciaNRCViewSet(viewsets.ModelViewSet):
                 gmd = float(gmd_str)
             except ValueError:
                 return Response({'gmd': 'Deve ser um número.'}, status=status.HTTP_400_BAD_REQUEST)
+            if gmd < 0:
+                return Response(
+                    {'gmd': 'Não pode ser negativo.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         # Filtro base: categoria + fase
         qs = ExigenciaNRC.objects.filter(categoria=categoria, fase=fase)
@@ -99,9 +111,18 @@ class ExigenciaNRCViewSet(viewsets.ModelViewSet):
         if fase in FASES_COM_PARTO_E_DIAS:
             if tipo_parto:
                 try:
-                    qs = qs.filter(tipo_parto=int(tipo_parto))
+                    tipo_parto_num = int(tipo_parto)
                 except ValueError:
-                    pass
+                    return Response(
+                        {'tipo_parto': 'Informe um número inteiro entre 1 e 5.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                if tipo_parto_num not in range(1, 6):
+                    return Response(
+                        {'tipo_parto': 'Informe um valor entre 1 e 5.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                qs = qs.filter(tipo_parto=tipo_parto_num)
 
         if not qs.exists():
             return Response(

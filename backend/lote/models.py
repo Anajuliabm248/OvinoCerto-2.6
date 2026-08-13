@@ -1,4 +1,4 @@
-"""modelos do app de lote"""
+"""Dados zootécnicos dos grupos de animais cadastrados nas propriedades."""
 
 from django.db import models
 
@@ -53,7 +53,7 @@ FASES_COM_PARTO_E_DIAS = [
 ]
 
 class Lote(models.Model):
-    '''Model para representar um lote de animais em uma propriedade.'''
+    """Agrupa animais com as mesmas condições produtivas e nutricionais."""
     propriedade = models.ForeignKey(
         'propriedade.Propriedade',
         on_delete=models.CASCADE,
@@ -91,10 +91,11 @@ class Lote(models.Model):
     dt_atualizacao = models.DateTimeField(auto_now=True)
 
     class Meta:
-        '''classe meta, define o nome do model e a ordenação padrão'''
+        """Mantém os lotes mais recentes no início das listagens."""
         verbose_name = 'Lote'
         verbose_name_plural = 'Lotes'
         ordering = ['-dt_cadastro']
 
     def __str__(self):
+        """Identifica o lote junto da propriedade a que ele pertence."""
         return f"{self.nome_lote} ({self.propriedade.nome})"

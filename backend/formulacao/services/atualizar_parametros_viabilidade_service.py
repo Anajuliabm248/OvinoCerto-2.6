@@ -33,6 +33,7 @@ _VALIDACOES: dict[str, tuple[str, bool]] = {
 
 
 class AtualizarParametrosViabilidadeService:
+    """Atualiza parcialmente um cenário econômico depois de validar cada unidade."""
 
     @staticmethod
     def executar(formulacao_id: int, **campos) -> ParametrosViabilidade:

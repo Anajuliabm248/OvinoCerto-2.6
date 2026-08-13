@@ -1,6 +1,5 @@
-"""serializers de ingredientes"""
+"""Validação do catálogo de ingredientes e dos preços pessoais."""
 
-from django.db.models import OrderBy
 from rest_framework import serializers
 from .models import Ingrediente, PrecoIngredienteUsuario
 from accounts.models import Usuario
@@ -20,7 +19,7 @@ class AtualizarPrecoCatalogoInputSerializer(serializers.Serializer):
 
 
 class IngredienteSerializer(serializers.ModelSerializer):
-    '''serializer do ingrediente'''
+    """Expõe composição, origem e preço do usuário que fez a requisição."""
     classificacao_display = serializers.CharField(
         source='get_classificacao_display', read_only=True
     )
@@ -33,7 +32,7 @@ class IngredienteSerializer(serializers.ModelSerializer):
     preco_kg_mn = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
-        '''classe meta, define os campos do serializer'''
+        """Protege propriedade, origem e datas contra edição direta."""
         model = Ingrediente
         fields = [
             'id',
@@ -78,7 +77,7 @@ class IngredienteSerializer(serializers.ModelSerializer):
         }
 
     def validate_limite_max_participacao(self, value):
-        '''Quando informado, o limite deve ser um percentual válido (0 exclusive-100].'''
+        """Aceita limite vazio ou percentual maior que zero e até 100%."""
         if value is not None and not (0.0 < value <= 100.0):
             raise serializers.ValidationError(
                 'O limite máximo de participação deve estar entre 0 (exclusive) e 100%.'
@@ -86,17 +85,29 @@ class IngredienteSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs):
-        '''Ingredientes Valadares não podem ser editados via API'''
+        """Impede catálogo público editável e rejeita composição ou custo impossíveis."""
 
         instance = getattr(self, 'instance', None)
         if instance and instance.fonte_valadares:
             raise serializers.ValidationError(
                 'Ingredientes da tabela Valadares não podem ser editados.'
             )
+
+        campos_percentuais = ('ms', 'pb', 'ndt', 'fdn', 'ee', 'ca', 'p')
+        for campo in campos_percentuais:
+            if campo not in attrs:
+                continue
+            valor = attrs[campo]
+            minimo = 0.0 if campo != 'ms' else 1e-12
+            if not minimo <= valor <= 100.0 or (campo == 'ms' and valor == 0):
+                mensagem = 'deve ser maior que zero e até 100%' if campo == 'ms' else 'deve estar entre 0 e 100%'
+                raise serializers.ValidationError({campo: f'{campo.upper()} {mensagem}.'})
+        if 'custo_kg' in attrs and attrs['custo_kg'] < 0:
+            raise serializers.ValidationError({'custo_kg': 'O custo não pode ser negativo.'})
         return attrs
 
     def get_preco_kg_mn(self, obj):
-        """Retorna o preço (se houver) gravado pelo usuário para este ingrediente."""
+        """Busca o preço regional do usuário atual sem expor preços de terceiros."""
         request = self.context.get('request')
         if not request or not hasattr(request, 'user'):
             return None

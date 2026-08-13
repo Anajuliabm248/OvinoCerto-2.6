@@ -1,16 +1,45 @@
-"""Configurações do projeto Django"""
+"""Configuração central do backend.
+
+Os valores que mudam entre desenvolvimento e produção vêm de variáveis de
+ambiente. Em desenvolvimento o projeto continua funcionando sem arquivo
+``.env``; em produção, segredo, hosts e banco devem ser informados de forma
+explícita para evitar uma inicialização insegura por acidente.
+"""
 
 import os
 from pathlib import Path
 from datetime import timedelta
+from django.core.exceptions import ImproperlyConfigured
+from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR.parent / '.env')
 
-SECRET_KEY = 'django-insecure-^#9i4)l_+gk-&p&o_uy-92$v*e1yn&0!y2_uby15y$*ek$vnbo'
+def _env_bool(nome: str, padrao: bool = False) -> bool:
+    """Lê uma variável booleana aceitando os formatos comuns de ``.env``."""
+    valor = os.environ.get(nome)
+    if valor is None:
+        return padrao
+    return valor.strip().lower() in {'1', 'true', 'sim', 'yes', 'on'}
 
-DEBUG = True
 
-ALLOWED_HOSTS = ['*']
+def _env_lista(nome: str, padrao: list[str]) -> list[str]:
+    """Converte uma variável separada por vírgulas em uma lista limpa."""
+    valor = os.environ.get(nome)
+    if not valor:
+        return padrao
+    return [item.strip() for item in valor.split(',') if item.strip()]
+
+
+DEBUG = _env_bool('DEBUG', True)
+
+SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY')
+if not SECRET_KEY:
+    if not DEBUG:
+        raise ImproperlyConfigured('Defina DJANGO_SECRET_KEY quando DEBUG estiver desativado.')
+    SECRET_KEY = 'django-insecure-apenas-para-desenvolvimento-local'
+
+ALLOWED_HOSTS = _env_lista('ALLOWED_HOSTS', ['localhost', '127.0.0.1'])
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -66,7 +95,7 @@ WSGI_APPLICATION = 'projeto.wsgi.application'
 
 
 # Banco de dados
-_use_sqlite = os.environ.get('USE_SQLITE', 'true').lower() == 'true'
+_use_sqlite = _env_bool('USE_SQLITE', True)
 
 if _use_sqlite:
     DATABASES = {
@@ -81,7 +110,7 @@ else:
             'ENGINE': 'django.db.backends.postgresql',
             'NAME':     os.environ.get('DB_NAME',     'ovino_certo'),
             'USER':     os.environ.get('DB_USER',     'postgres'),
-            'PASSWORD': os.environ.get('DB_PASSWORD', '1234'),
+            'PASSWORD': os.environ.get('DB_PASSWORD', ''),
             'HOST':     os.environ.get('DB_HOST',     'localhost'),
             'PORT':     os.environ.get('DB_PORT',     '5432'),
             'OPTIONS':  {'connect_timeout': 10},
@@ -114,11 +143,10 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 
 # CORS
-CORS_ALLOWED_ORIGINS = [
+CORS_ALLOWED_ORIGINS = _env_lista('CORS_ALLOWED_ORIGINS', [
     'http://localhost:3000',
     'http://localhost:5173',
-    'http://localhost:8000',
-]
+])
 CORS_ALLOW_CREDENTIALS = True
 
 

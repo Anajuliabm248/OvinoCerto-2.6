@@ -28,6 +28,7 @@ from formulacao.models import (
 
 
 class ExigenciaRepository:
+    """Traduz a exigência configurada no banco para objetos do domínio puro."""
 
     # ------------------------------------------------------------------
     # Leitura: DB → Domínio

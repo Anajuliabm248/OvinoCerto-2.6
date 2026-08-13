@@ -36,6 +36,7 @@ _ORIGEM_DB_PARA_DOMINIO: dict[str, OrigemParticipacao] = {
 
 
 class IngredienteFormulacaoRepository:
+    """Mantém a ordem dos ingredientes ao traduzir ORM, vetores e resultados."""
 
     
     # Leitura: DB → Domínio

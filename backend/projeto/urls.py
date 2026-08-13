@@ -1,4 +1,4 @@
-"""urls do projeto Django"""
+"""Reúne autenticação, recursos REST, documentação e painel administrativo."""
 
 from django.contrib import admin
 from django.urls import include, path

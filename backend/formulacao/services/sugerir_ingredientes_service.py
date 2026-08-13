@@ -34,6 +34,7 @@ from ingrediente.models import Ingrediente, PrecoIngredienteUsuario
 
 
 class SugerirIngredientesService:
+    """Reúne o contexto e ranqueia ingredientes permitidos ao usuário."""
 
     @staticmethod
     def executar(

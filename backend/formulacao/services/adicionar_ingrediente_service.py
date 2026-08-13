@@ -16,10 +16,9 @@ Fluxo:
   6. Registra evento INGREDIENTE_ADICIONADO.
   7. Dispara RecalcularFormulacaoService (nutrientes + alertas + snapshot).
 
-Se MotorAdequacao.redistribuir() não convergir (espaço livre
-insuficiente ou restrições incompatíveis), o ingrediente ainda é
-adicionado com a melhor distribuição possível — o MotorAlertas
-reportará as violações. Nunca bloqueia (regra de negócio, seção 15).
+Metas nutricionais não atendidas geram alertas. Incompatibilidades
+estruturais (soma e limites de participação) rejeitam toda a operação;
+como o serviço é atômico, o ingrediente não fica parcialmente adicionado.
 """
 
 from __future__ import annotations
@@ -40,6 +39,7 @@ from ingrediente.models import Ingrediente
 
 
 class AdicionarIngredienteService:
+    """Inclui um ingrediente e redistribui as linhas livres para manter 100%."""
 
     @staticmethod
     @transaction.atomic

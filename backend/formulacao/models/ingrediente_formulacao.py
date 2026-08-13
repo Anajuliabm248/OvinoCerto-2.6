@@ -20,6 +20,7 @@ class OrigemParticipacaoChoices(models.TextChoices):
 
 
 class OrigemCustoChoices(models.TextChoices):
+    """Distingue preço regional do usuário e preço particular da receita."""
     CATALOGO       = "CATALOGO",       "Banco de preços do usuário"
     OVERRIDE_LOCAL = "OVERRIDE_LOCAL", "Sobrescrito nesta formulação"
 

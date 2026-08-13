@@ -22,6 +22,7 @@ que instrui o renderer HTML a usar <select>, <select multiple>,
 
 from __future__ import annotations
 
+from django.core.exceptions import ObjectDoesNotExist
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -292,7 +293,7 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
         Recalcula a distribuicao usando os ingredientes ja adicionados.
         `ingrediente_ids` so e usado quando a formulacao ainda esta vazia.
         """
-        formulacao = self.get_object()
+        formulacao = self._get_formulacao(request, pk)
 
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -330,11 +331,11 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
                 .configuracoes_nutrientes.all()
                 .order_by("nutriente")
             )
-        except Exception:
+        except ObjectDoesNotExist:
             return Response([])
         return Response(ConfiguracaoNutrienteSerializer(configs, many=True).data)
 
-    @action(detail=True, methods=["post"], url_path=r"exigencia/(?P<nutriente>[A-Z_]+)")
+    @action(detail=True, methods=["patch", "post"], url_path=r"exigencia/(?P<nutriente>[A-Z_]+)")
     def atualizar_exigencia(self, request, pk=None, nutriente=None):
         """
         PATCH /formulacoes/{id}/exigencia/{NUTRIENTE}/
@@ -417,7 +418,7 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
 
     @action(
         detail=True,
-        methods=["post"],
+        methods=["patch", "post"],
         url_path=r"ingredientes/(?P<ing_form_id>\d+)/ajustar",
     )
     def ajustar_ingrediente(self, request, pk=None, ing_form_id=None):
@@ -450,7 +451,7 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
 
     @action(
         detail=True,
-        methods=["post"],
+        methods=["patch", "post"],
         url_path=r"ingredientes/(?P<ing_form_id>\d+)/preco",
     )
     def atualizar_preco_ingrediente(self, request, pk=None, ing_form_id=None):
@@ -497,8 +498,8 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
         """
         POST /formulacoes/{id}/ingredientes/{ing_form_id}/destravar/
 
-        Remove a trava MANUAL_TRAVADA, liberando o ingrediente para
-        redistribuição automática na próxima operação.
+        Remove a trava MANUAL_TRAVADA e redistribui imediatamente a fração
+        liberada entre os ingredientes calculados, respeitando seus limites.
         """
         self._get_formulacao(request, pk)
 
@@ -683,7 +684,7 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
 
     @action(
         detail=True,
-        methods=["post"],
+        methods=["patch", "post"],
         url_path="viabilidade/parametros",
     )
     def atualizar_parametros_viabilidade(self, request, pk=None):
@@ -737,13 +738,25 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        ing_form_id_raw = request.query_params.get("ing_form_id")
-        ing_form_id     = int(ing_form_id_raw) if ing_form_id_raw else None
-
         try:
+            ing_form_id_raw = request.query_params.get("ing_form_id")
+            ing_form_id = int(ing_form_id_raw) if ing_form_id_raw else None
             max_res = int(request.query_params.get("max_resultados", 10))
         except (TypeError, ValueError):
-            max_res = 10
+            return Response(
+                {"detail": "'ing_form_id' e 'max_resultados' devem ser números inteiros."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if modo == "substituir" and ing_form_id is None:
+            return Response(
+                {"detail": "Informe 'ing_form_id' no modo 'substituir'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not 1 <= max_res <= 100:
+            return Response(
+                {"detail": "'max_resultados' deve estar entre 1 e 100."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
             perfil    = self._perfil(request)
@@ -777,7 +790,7 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
         self._get_formulacao(request, pk)
         try:
             snapshot = SnapshotRepository.get_versao(int(pk), int(versao_num))
-        except Exception:
+        except ObjectDoesNotExist:
             return Response(
                 {"detail": f"Versão {versao_num} não encontrada."},
                 status=status.HTTP_404_NOT_FOUND,

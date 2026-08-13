@@ -43,6 +43,7 @@ class DesvioNutricional:
         valor_atual: float,
         requisito: RequisitoNutriente,
     ) -> "DesvioNutricional":
+        """Compara o valor calculado com o requisito e registra status e magnitude."""
         status, magnitude = requisito.avaliar(valor_atual)
         return cls(
             nutriente=nutriente,
@@ -58,6 +59,7 @@ class DesvioNutricional:
 
     @property
     def atende(self) -> bool:
+        """Informa de forma direta se o nutriente está dentro dos limites."""
         return self.status == StatusAdequacao.ATENDE
 
     @property
@@ -84,6 +86,7 @@ class DesvioNutricional:
     
 
     def to_dict(self) -> dict:
+        """Converte o desvio em dados simples adequados a JSON e snapshots."""
         return {
             "nutriente": self.nutriente.value,
             "valor_atual": self.valor_atual,

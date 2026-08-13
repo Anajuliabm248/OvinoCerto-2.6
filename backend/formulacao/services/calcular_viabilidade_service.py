@@ -31,9 +31,11 @@ from formulacao.repositories import (
 
 
 class CalcularViabilidadeService:
+    """Monta os vetores da receita e executa a projeção econômica atual."""
 
     @staticmethod
     def executar(formulacao_id: int) -> SaidaViabilidade:
+        """Carrega participações, preços e parâmetros antes de chamar o motor puro."""
         participacao: ParticipacaoVetor = IngredienteFormulacaoRepository.get_participacao(
             formulacao_id
         )

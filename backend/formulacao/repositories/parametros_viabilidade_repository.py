@@ -39,6 +39,7 @@ _CAMPOS_EDITAVEIS = frozenset({
 
 
 class ParametrosViabilidadeRepository:
+    """Cria, recupera e atualiza o cenário econômico independente da receita."""
 
     # ------------------------------------------------------------------
     # Leitura

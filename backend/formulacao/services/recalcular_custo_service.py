@@ -25,6 +25,7 @@ from formulacao.repositories import ExigenciaRepository, IngredienteFormulacaoRe
 
 
 class RecalcularCustoService:
+    """Executa o motor de custos e persiste o rateio diário por ingrediente."""
 
     @staticmethod
     def executar(formulacao_id: int) -> SaidaCusto:

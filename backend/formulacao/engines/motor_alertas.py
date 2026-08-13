@@ -37,6 +37,7 @@ from formulacao.engines.motor_custo import SaidaCusto
 
 @dataclass(frozen=True)
 class ThresholdsSeveridade:
+    """Centraliza os cortes que transformam desvios em níveis de atenção."""
     info_max:    float = 0.05   # até 5%  → INFO
     atencao_max: float = 0.20   # até 20% → ATENCAO; acima → CRITICO
 
@@ -69,6 +70,7 @@ class ParticipacaoIngredienteLimite:
 
 
 class MotorAlertas:
+    """Traduz desvios nutricionais, estruturais e de custo em alertas legíveis."""
 
     @staticmethod
     def avaliar(

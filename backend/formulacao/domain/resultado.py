@@ -75,18 +75,22 @@ class ResultadoAdequacao:
 
     @property
     def atende_tudo(self) -> bool:
+        """Só retorna verdadeiro quando todos os nutrientes configurados atendem."""
         return all(d.atende for d in self.desvios)
 
     def desvio_de(self, nutriente: Nutriente) -> DesvioNutricional | None:
+        """Localiza o desvio de um nutriente ou retorna ``None`` se não configurado."""
         for d in self.desvios:
             if d.nutriente == nutriente:
                 return d
         return None
 
     def em_deficit(self) -> tuple[DesvioNutricional, ...]:
+        """Filtra os nutrientes que ficaram abaixo do requisito mínimo."""
         return tuple(d for d in self.desvios if d.status == StatusAdequacao.DEFICIT)
 
     def em_excesso(self) -> tuple[DesvioNutricional, ...]:
+        """Filtra os nutrientes que ultrapassaram o requisito máximo."""
         return tuple(d for d in self.desvios if d.status == StatusAdequacao.EXCESSO)
 
     def vetor_necessidade(self) -> dict[Nutriente, float]:
@@ -108,6 +112,7 @@ class ResultadoAdequacao:
     # Serialização (payload jsonb do SnapshotFormulacao)
 
     def to_dict(self) -> dict:
+        """Gera o payload versionado armazenado nos snapshots da formulação."""
         return {
             "schema_version": self.SCHEMA_VERSION,
             "soma_participacoes": self.soma_participacoes,

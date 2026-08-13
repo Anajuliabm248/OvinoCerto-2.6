@@ -1,3 +1,5 @@
+"""Fachada pública dos casos de uso disponíveis no módulo de formulação."""
+
 from .adicionar_ingrediente_service import AdicionarIngredienteService
 from .ajustar_participacao_service import AjustarParticipacaoService
 from .atualizar_exigencia_service import AtualizarExigenciaService

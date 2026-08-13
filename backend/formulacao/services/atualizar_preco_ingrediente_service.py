@@ -59,6 +59,7 @@ Escopo = Literal["receita", "geral"]
 
 
 class AtualizarPrecoIngredienteService:
+    """Atualiza preço regional ou local, registra histórico e refaz os custos."""
 
     @staticmethod
     @transaction.atomic
@@ -69,6 +70,7 @@ class AtualizarPrecoIngredienteService:
         escopo: Escopo,
         usuario_id: int | None = None,
     ) -> IngredienteFormulacao:
+        """Valida o escopo, persiste o preço e atualiza o custo da receita."""
         if novo_preco is None or novo_preco < 0:
             raise ValueError(
                 f"Preço inválido: {novo_preco}. Informe um valor >= 0."

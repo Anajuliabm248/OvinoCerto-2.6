@@ -2,6 +2,7 @@
 Serializers DRF para o módulo de formulação.
 """
 
+from django.core.exceptions import ObjectDoesNotExist
 from django.db.models import Case, IntegerField, Q, Value, When
 from rest_framework import serializers
 
@@ -71,10 +72,12 @@ def _ingredientes_do_usuario(context):
 # ---------------------------------------------------------------------------
 
 class ExigenciaNRCSerializer(serializers.ModelSerializer):
+    """Representa uma linha NRC completa para seleção na pré-formulação."""
     categoria_display = serializers.CharField(source="get_categoria_display", read_only=True)
     fase_display      = serializers.CharField(source="get_fase_display",      read_only=True)
 
     class Meta:
+        """Expõe todos os valores da linha NRC apenas para leitura."""
         model = ExigenciaNRC
         fields = [
             "id", "categoria", "categoria_display", "fase", "fase_display",
@@ -90,6 +93,7 @@ class ExigenciaNRCSerializer(serializers.ModelSerializer):
 # ---------------------------------------------------------------------------
 
 class IngredienteDisponivelSerializer(serializers.Serializer):
+    """Apresenta um ingrediente selecionável já com o preço pessoal resolvido."""
     id                       = serializers.IntegerField()
     nome                     = serializers.CharField()
     classificacao            = serializers.CharField()
@@ -107,6 +111,7 @@ class IngredienteDisponivelSerializer(serializers.Serializer):
     fonte_valadares          = serializers.BooleanField()
 
     def get_preco_nao_informado(self, obj) -> bool:
+        """Distingue preço realmente ausente de um valor numérico válido."""
         return bool(getattr(obj, "_sem_preco", 1))
 
 
@@ -115,6 +120,7 @@ class IngredienteDisponivelSerializer(serializers.Serializer):
 # ---------------------------------------------------------------------------
 
 class IniciarFormulacaoInputSerializer(serializers.Serializer):
+    """Valida lote, exigência NRC e identificação da primeira etapa da receita."""
     lote_id = serializers.PrimaryKeyRelatedField(
         queryset=Lote.objects.none(),
         label="Lote",
@@ -150,13 +156,14 @@ class IniciarFormulacaoInputSerializer(serializers.Serializer):
 # ---------------------------------------------------------------------------
 
 class GerarFormulacaoInicialInputSerializer(serializers.Serializer):
+    """Recebe ingredientes e o alvo rígido de volumoso usado na distribuição."""
     percentual_alvo_volumoso = serializers.FloatField(
         required=False,
         default=0.50,
         min_value=0.0,
-        max_value=1.0,
-        label="% alvo volumosos (0–1)",
-        help_text="Fração-alvo de volumosos na distribuição heurística. Padrão 0.50.",
+        max_value=100.0,
+        label="Alvo de volumosos (%)",
+        help_text="Aceita fração (0,50) ou percentual (50). Padrão: 50%.",
         style={"base_template": "input.html"},
     )
     ingrediente_ids = serializers.PrimaryKeyRelatedField(
@@ -172,12 +179,24 @@ class GerarFormulacaoInicialInputSerializer(serializers.Serializer):
         super().__init__(*args, **kwargs)
         self.fields["ingrediente_ids"].queryset = _ingredientes_do_usuario(self.context)
 
+    def validate_percentual_alvo_volumoso(self, value: float) -> float:
+        """
+        Normaliza a entrada para fracao 0-1.
+
+        O front ja enviou esse campo em formatos diferentes ao longo do
+        projeto: 0.20 e 20 devem significar o mesmo alvo de 20%.
+        """
+        valor = float(value)
+        return valor / 100.0 if valor > 1.0 else valor
+
 # ---------------------------------------------------------------------------
 # Exigência configurada
 # ---------------------------------------------------------------------------
 
 class ConfiguracaoNutrienteSerializer(serializers.ModelSerializer):
+    """Mostra o requisito nutricional normalizado que vale para a formulação."""
     class Meta:
+        """Expõe limites normalizados e a origem de cada configuração."""
         model  = ConfiguracaoNutriente
         fields = [
             "id", "nutriente", "operador", "valor_min", "valor_max",
@@ -187,6 +206,7 @@ class ConfiguracaoNutrienteSerializer(serializers.ModelSerializer):
 
 
 class AtualizarExigenciaInputSerializer(serializers.Serializer):
+    """Valida os formatos ``=``, ``>=``, ``<=`` e intervalo de um nutriente."""
     operador = serializers.ChoiceField(
         choices=["=", ">=", "<=", "ENTRE"],
         label="Operador",
@@ -221,6 +241,7 @@ class AtualizarExigenciaInputSerializer(serializers.Serializer):
 # ---------------------------------------------------------------------------
 
 class IngredienteFormulacaoSerializer(serializers.ModelSerializer):
+    """Detalha participação, massas, trava, limite e preço atual da linha."""
     ingrediente_nome          = serializers.CharField(source="ingrediente.nome",          read_only=True)
     ingrediente_classificacao = serializers.CharField(source="ingrediente.classificacao", read_only=True)
     ingrediente_tipo          = serializers.CharField(source="ingrediente.tipo",          read_only=True)
@@ -229,6 +250,7 @@ class IngredienteFormulacaoSerializer(serializers.ModelSerializer):
     )
 
     class Meta:
+        """Entrega campos de entrada, saídas calculadas e metadados de custo."""
         model  = IngredienteFormulacao
         fields = [
             "id", "ingrediente", "ingrediente_nome", "ingrediente_classificacao",
@@ -259,6 +281,7 @@ class AjustarParticipacaoInputSerializer(serializers.Serializer):
     )
 
     def get_fracao(self) -> float:
+        """Converte o percentual validado da API para a fração 0-1 do domínio."""
         return self.validated_data["ms_porcent"] / 100.0
 
 
@@ -286,6 +309,7 @@ class AtualizarPrecoInputSerializer(serializers.Serializer):
 
 
 class AdicionarIngredienteInputSerializer(serializers.Serializer):
+    """Seleciona um ingrediente visível e uma participação inicial opcional."""
     ingrediente_id = serializers.PrimaryKeyRelatedField(
         queryset=Ingrediente.objects.none(),
         label="Ingrediente",
@@ -303,6 +327,7 @@ class AdicionarIngredienteInputSerializer(serializers.Serializer):
 # ---------------------------------------------------------------------------
 
 class SugestaoIngredienteSerializer(serializers.Serializer):
+    """Explica a posição de um candidato no ranking de sugestões."""
     ingrediente_id       = serializers.IntegerField()
     nome                 = serializers.CharField()
     classificacao        = serializers.CharField()
@@ -331,20 +356,24 @@ class SugestaoIngredienteSerializer(serializers.Serializer):
 # ---------------------------------------------------------------------------
 
 class FormulacaoListSerializer(serializers.ModelSerializer):
+    """Entrega os dados compactos usados na listagem de formulações."""
     lote_nome = serializers.CharField(source="lote.nome_lote", read_only=True)
 
     class Meta:
+        """Mantém a listagem compacta e completamente somente leitura."""
         model  = Formulacao
         fields = ["id", "lote", "lote_nome", "titulo", "status", "dt_inc", "dt_alt"]
         read_only_fields = fields
 
 
 class FormulacaoDetailSerializer(serializers.ModelSerializer):
+    """Monta a receita completa com exigências e ingredientes atuais."""
     lote_nome    = serializers.CharField(source="lote.nome_lote",   read_only=True)
     exigencias   = serializers.SerializerMethodField()
     ingredientes = serializers.SerializerMethodField()
 
     class Meta:
+        """Expõe o agregado completo sem aceitar escrita por este serializer."""
         model  = Formulacao
         fields = [
             "id", "lote", "lote_nome", "usuario", "titulo", "observacoes",
@@ -353,14 +382,16 @@ class FormulacaoDetailSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_exigencias(self, obj: Formulacao):
+        """Retorna requisitos configurados ou lista vazia antes da inicialização."""
         try:
             exigencia = obj.exigencia_configurada
-        except Exception:
+        except ObjectDoesNotExist:
             return []
         configs = exigencia.configuracoes_nutrientes.all().order_by("nutriente")
         return ConfiguracaoNutrienteSerializer(configs, many=True).data
 
     def get_ingredientes(self, obj: Formulacao):
+        """Lista as linhas da receita da maior para a menor participação em MS."""
         qs = (
             obj.ingredientes_formulacao
             .select_related("ingrediente")
@@ -374,6 +405,7 @@ class FormulacaoDetailSerializer(serializers.ModelSerializer):
 # ---------------------------------------------------------------------------
 
 class DesvioOutputSerializer(serializers.Serializer):
+    """Representa a situação de um nutriente diante do requisito configurado."""
     nutriente             = serializers.CharField()
     valor_atual           = serializers.FloatField()
     operador              = serializers.CharField()
@@ -385,6 +417,7 @@ class DesvioOutputSerializer(serializers.Serializer):
 
 
 class CustoIngredienteBreakdownSerializer(serializers.Serializer):
+    """Detalha quanto cada ingrediente contribui para o custo diário."""
     ing_form_id  = serializers.IntegerField(source="id")
     ingrediente_nome = serializers.CharField(source="ingrediente.nome")
     ms_porcent   = serializers.FloatField()
@@ -426,6 +459,7 @@ class ParametrosViabilidadeSerializer(serializers.ModelSerializer):
     e como saída de escrita (retorno de PATCH .../viabilidade/parametros/).
     """
     class Meta:
+        """Protege o vínculo com a formulação e as datas de auditoria."""
         model = ParametrosViabilidade
         fields = [
             "num_animais",
@@ -539,6 +573,7 @@ class ViabilidadeOutputSerializer(serializers.Serializer):
 
 
 class ResultadoAdequacaoOutputSerializer(serializers.Serializer):
+    """Entrega a soma da dieta e os desvios nutricionais do último recálculo."""
     schema_version     = serializers.IntegerField()
     soma_participacoes = serializers.FloatField()
     soma_valida        = serializers.BooleanField()
@@ -551,7 +586,9 @@ class ResultadoAdequacaoOutputSerializer(serializers.Serializer):
 # ---------------------------------------------------------------------------
 
 class AlertaSerializer(serializers.ModelSerializer):
+    """Expõe alertas ativos com severidade e contexto para a interface."""
     class Meta:
+        """Mantém os alertas como saída somente leitura da formulação."""
         model  = Alerta
         fields = [
             "id", "nutriente", "tipo", "severidade",
@@ -568,14 +605,18 @@ class AlertaSerializer(serializers.ModelSerializer):
 # ---------------------------------------------------------------------------
 
 class SnapshotListSerializer(serializers.ModelSerializer):
+    """Lista metadados das versões sem transferir o conteúdo completo."""
     class Meta:
+        """Omite o payload pesado e preserva somente os metadados da versão."""
         model  = SnapshotFormulacao
         fields = ["id", "versao_num", "motivo", "usuario", "dt_criacao"]
         read_only_fields = fields
 
 
 class SnapshotDetailSerializer(serializers.ModelSerializer):
+    """Entrega o conteúdo integral de uma versão solicitada explicitamente."""
     class Meta:
+        """Inclui o payload completo apenas na consulta de uma versão específica."""
         model  = SnapshotFormulacao
         fields = ["id", "versao_num", "payload", "motivo", "usuario", "dt_criacao"]
         read_only_fields = fields
@@ -586,7 +627,9 @@ class SnapshotDetailSerializer(serializers.ModelSerializer):
 # ---------------------------------------------------------------------------
 
 class EventoFormulacaoSerializer(serializers.ModelSerializer):
+    """Representa um evento imutável da trilha de auditoria da formulação."""
     class Meta:
+        """Expõe a trilha de auditoria como registros imutáveis."""
         model  = EventoFormulacao
         fields = ["id", "tipo_evento", "payload", "usuario", "dt_criacao"]
         read_only_fields = fields

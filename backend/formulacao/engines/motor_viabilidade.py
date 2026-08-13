@@ -97,6 +97,7 @@ class ResultadoEconomicoLinha:
 
 @dataclass(frozen=True)
 class SaidaViabilidade:
+    """Consolida consumo, investimento, preço mínimo e resultado do cenário."""
     indices: IndicesZootecnicos
     linhas_custo: list[LinhaCustoIngrediente]
     consumo_total_percentual: float
@@ -123,12 +124,20 @@ class MotorViabilidade:
         nomes: list[str],
         ingrediente_ids: list[int | None],
     ) -> SaidaViabilidade:
+        """Projeta o cenário econômico usando vetores alinhados por ingrediente."""
         p = parametros
-        indices = MotorViabilidade._calcular_indices(p)
-
         fracoes_ms     = np.asarray(fracoes_ms, dtype=float)
         ms_percentuais = np.asarray(ms_percentuais, dtype=float)
         precos_kg_mn   = np.asarray(precos_kg_mn, dtype=float)
+        MotorViabilidade._validar_entrada(
+            p,
+            fracoes_ms,
+            ms_percentuais,
+            precos_kg_mn,
+            nomes,
+            ingrediente_ids,
+        )
+        indices = MotorViabilidade._calcular_indices(p)
 
         # E: ms do ingrediente (kg/dia/animal) -> mn bruto (kg/dia/animal, sem perdas)
         ms_kg_dia_animal = fracoes_ms * indices.cms_kg_dia
@@ -137,7 +146,7 @@ class MotorViabilidade:
             out=np.zeros_like(ms_kg_dia_animal), where=ms_percentuais > 0,
         )
         # E: aplica perdas (sobras) -> consumo real a fornecer
-        mn_kg_dia_animal = (mn_kg_dia_bruto * (1.0 + p.perdas_alimentos_percentual))/10
+        mn_kg_dia_animal = mn_kg_dia_bruto * (1.0 + p.perdas_alimentos_percentual)
 
         # F, G, I: lote, período, investimento
         consumo_kg_dia_lote = (mn_kg_dia_animal * p.num_animais)
@@ -224,6 +233,47 @@ class MotorViabilidade:
         )
 
     @staticmethod
+    def _validar_entrada(
+        p: ParametrosViabilidade,
+        fracoes_ms: np.ndarray,
+        ms_percentuais: np.ndarray,
+        precos_kg_mn: np.ndarray,
+        nomes: list[str],
+        ingrediente_ids: list[int | None],
+    ) -> None:
+        """Interrompe cedo quando quantidades ou vetores tornariam o cenário enganoso."""
+        vetores = (fracoes_ms, ms_percentuais, precos_kg_mn)
+        if any(vetor.ndim != 1 for vetor in vetores):
+            raise ValueError('Os vetores da viabilidade devem ser unidimensionais.')
+        tamanho = len(fracoes_ms)
+        if any(len(vetor) != tamanho for vetor in vetores[1:]) or not (
+            len(nomes) == len(ingrediente_ids) == tamanho
+        ):
+            raise ValueError('Todos os dados de ingredientes devem ter o mesmo tamanho.')
+        if np.any(~np.isfinite(fracoes_ms)) or np.any(fracoes_ms < 0):
+            raise ValueError('As participações devem ser finitas e não negativas.')
+        if np.any(~np.isfinite(ms_percentuais)) or np.any(
+            (ms_percentuais <= 0) | (ms_percentuais > 100)
+        ):
+            raise ValueError('A matéria seca de cada ingrediente deve estar entre 0% e 100%.')
+        if np.any(~np.isfinite(precos_kg_mn)) or np.any(precos_kg_mn < 0):
+            raise ValueError('Os preços devem ser finitos e não negativos.')
+        if p.num_animais <= 0:
+            raise ValueError('A quantidade de animais deve ser maior que zero.')
+        if p.estimativa_permanencia_dias <= 0:
+            raise ValueError('A permanência deve ser maior que zero dia.')
+        if p.peso_entrada_kg <= 0:
+            raise ValueError('O peso de entrada deve ser maior que zero.')
+        if p.gmd_esperado_kg < 0:
+            raise ValueError('O ganho médio diário não pode ser negativo.')
+        if not 0 < p.cms_percentual_pv <= 1:
+            raise ValueError('O percentual de CMS deve ser uma fração entre 0 e 1.')
+        if not 0 <= p.perdas_alimentos_percentual <= 1:
+            raise ValueError('As perdas devem ser uma fração entre 0 e 1.')
+        if p.preco_venda_kg_pv < 0:
+            raise ValueError('O preço de venda não pode ser negativo.')
+
+    @staticmethod
     def _calcular_indices(p: ParametrosViabilidade) -> IndicesZootecnicos:
         """
         Réplica direta de E15-E18 da planilha:
@@ -249,6 +299,7 @@ class MotorViabilidade:
         custo_total: float,
         dias: int,
     ) -> ResultadoEconomicoLinha:
+        """Compara renda e custo no período e também apresenta valores diários."""
         viabilidade_total = renda_bruta_total - custo_total
         return ResultadoEconomicoLinha(
             renda_bruta_total=renda_bruta_total,
