@@ -76,6 +76,7 @@ class SugerirIngredientesService:
 
         vetor_substituido: np.ndarray | None = None
         fracao_substituido: float | None = None
+        candidato_substituido: CandidatoSugestao | None = None
         ids_excluir: set[int]
 
         if modo == "substituir":
@@ -95,6 +96,15 @@ class SugerirIngredientesService:
             if ing_form.ingrediente:
                 vetor_substituido = _ingrediente_para_array(ing_form.ingrediente)
                 fracao_substituido = float(ing_form.ms_porcent) / 100.0
+                candidato_substituido = CandidatoSugestao(
+                    ingrediente_id=ing_form.ingrediente.pk,
+                    nome=ing_form.ingrediente.nome,
+                    classificacao=ing_form.ingrediente.classificacao,
+                    tipo=ing_form.ingrediente.tipo,
+                    custo_kg=0.0,
+                    ms_percentual=float(ing_form.ingrediente.ms or 0.0),
+                    vetor=vetor_substituido,
+                )
                 ids_excluir = {ing_form.ingrediente_id}
             else:
                 ids_excluir = set()
@@ -136,6 +146,7 @@ class SugerirIngredientesService:
             criterio=criterio,
             vetor_substituido=vetor_substituido,
             fracao_substituido=fracao_substituido,
+            candidato_substituido=candidato_substituido,
             max_resultados=max_resultados,
         )
 
