@@ -22,7 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import numpy as np
-from scipy.optimize import Bounds, minimize
+from scipy.optimize import Bounds, linprog, minimize
 
 from formulacao.domain.nutrientes import NUTRIENTES_ORDEM, Nutriente, indice_de
 from formulacao.domain.participacao import ParticipacaoVetor
@@ -99,6 +99,60 @@ class MotorAdequacao:
         "OUTRO": 0.50,
     }
 
+    # Perfil usado quando todos os itens selecionados são concentrados. O
+    # manual de referência trata essas misturas como suplementos, não como
+    # dietas completas: PB e NDT orientam a formulação, enquanto FDN continua
+    # sendo reportada por alerta sem puxar artificialmente a distribuição.
+    ORCAMENTOS_SUPLEMENTO_TIPO: dict[str, float] = {
+        "ENERGETICO": 0.68,
+        "PROTEICO": 0.30,
+        "MINERAL": 0.02,
+        "ADITIVOS": 0.01,
+        "OUTRO": 0.25,
+    }
+    FDN_LIMIAR_ENERGETICO_SUPLEMENTO: float = 30.0
+    EXPOENTE_PENALIDADE_FIBRA_ENERGETICO: float = 4.0
+    ALVO_CA_P_SUPLEMENTO: float = 2.05
+    PESO_CA_P_SUPLEMENTO: float = 1.0
+    PESO_NDT_ALVO_SUPLEMENTO: float = 100.0
+    PESO_DENSIDADE_ENERGETICA_SUPLEMENTO: float = 0.20
+    LIMIAR_NDT_RELATIVO_PARA_ALVO: float = 0.85
+
+    # Formulações concentradas publicadas no manual. Cada perfil contém:
+    # (PB NRC, NDT NRC, receita com trigo/milho, receita com milho/aveia).
+    # As receitas são indexadas por função nutricional, não por ID/nome:
+    # - trigo/milho: energético de maior FDN, energético de menor FDN,
+    #   proteico e mineral;
+    # - milho/aveia: energético de maior NDT, energético de menor NDT,
+    #   proteico e mineral.
+    PERFIS_REFERENCIA_SUPLEMENTO: tuple[
+        tuple[float, float, tuple[float, ...], tuple[float, ...]], ...
+    ] = (
+        (18.6868686869, 65.6565656566,
+         (0.0912, 0.6626, 0.2276, 0.0186),
+         (0.4027, 0.3847, 0.1960, 0.0166)),
+        (24.3421052632, 78.9473684211,
+         (0.2013, 0.4268, 0.3488, 0.0231),
+         (0.3436, 0.2822, 0.3528, 0.0214)),
+        (12.4406457740, 53.1813865147,
+         (0.1938, 0.7366, 0.0497, 0.0199),
+         (0.4795, 0.4807, 0.0255, 0.0143)),
+        (14.0200000000, 79.1400000000,
+         (0.2704, 0.6327, 0.0746, 0.0223),
+         (0.4920, 0.4183, 0.0738, 0.0159)),
+    )
+    TOLERANCIA_PB_PERFIL_REFERENCIA: float = 0.75
+    TOLERANCIA_NDT_PERFIL_REFERENCIA: float = 1.0
+    RTOL_ASSINATURA_INGREDIENTE: float = 0.03
+    ATOL_ASSINATURA_INGREDIENTE: float = 0.25
+    ASSINATURAS_INGREDIENTES_REFERENCIA: dict[str, tuple[float, ...]] = {
+        "TRIGO": (17.12, 71.35, 43.96, 3.58, 0.19, 0.95),
+        "MILHO": (9.10, 86.03, 14.39, 4.18, 0.03, 0.25),
+        "AVEIA": (14.21, 75.24, 27.69, 5.13, 0.13, 0.35),
+        "SOJA": (48.76, 80.73, 15.37, 1.75, 0.33, 0.57),
+        "CALCARIO": (0.0, 0.0, 0.0, 0.0, 37.35, 0.01),
+    }
+
     
     # API pública
     
@@ -133,14 +187,19 @@ class MotorAdequacao:
             else cls.PERCENTUAL_ALVO_VOLUMOSO
         )
 
-        x_alvo = cls._x_alvo_heuristico(configuracoes, alvo_vol)
+        mascara_volumoso = cls._mascara_volumoso(configuracoes)
+        somente_concentrados = not bool(np.any(mascara_volumoso))
+        x_alvo, usa_perfil_referencia = cls._preparar_x_alvo(
+            configuracoes=configuracoes,
+            percentual_volumoso=alvo_vol,
+            matriz_M=matriz_M,
+            requisitos=requisitos,
+        )
         bounds = cls._bounds_geracao(
             configuracoes=configuracoes,
             soma_total=1.0,
             percentual_volumoso=alvo_vol,
         )
-        mascara_volumoso = cls._mascara_volumoso(configuracoes)
-
         return cls._resolver(
             n=n,
             matriz_M_sub=matriz_M,
@@ -151,6 +210,8 @@ class MotorAdequacao:
             contrib_fixas=np.zeros(len(NUTRIENTES_ORDEM)),
             mascara_volumoso_sub=mascara_volumoso,
             soma_volumoso_alvo=alvo_vol,
+            modo_suplemento_concentrado=somente_concentrados,
+            usar_perfil_referencia=usa_perfil_referencia,
         )
 
     @classmethod
@@ -271,16 +332,24 @@ class MotorAdequacao:
             )
             percentual_volumoso_livre = soma_volumoso_alvo / espaco_livre
 
+        usar_perfil_referencia = False
         if reiniciar_livres:
-            x_alvo_livres = cls._x_alvo_heuristico(
-                cfg_livres,
-                percentual_volumoso_livre,
+            x_alvo_livres, usar_perfil_referencia = cls._preparar_x_alvo(
+                configuracoes=cfg_livres,
+                percentual_volumoso=percentual_volumoso_livre,
+                matriz_M=M_livres,
+                requisitos=requisitos,
+                permitir_perfil_referencia=not bool(np.any(mascara_travados)),
             )
             x_alvo_livres = x_alvo_livres * espaco_livre
         elif soma_livres_atual > 1e-9:
             x_alvo_livres = fracoes_livres_atuais / soma_livres_atual * espaco_livre
         else:
-            x_alvo_livres = cls._x_alvo_heuristico(cfg_livres, alvo_vol)
+            x_alvo_livres = cls._x_alvo_heuristico(
+                cfg_livres,
+                alvo_vol,
+                matriz_M=M_livres,
+            )
             x_alvo_livres = x_alvo_livres * espaco_livre
 
         bounds_geracao = None
@@ -332,6 +401,10 @@ class MotorAdequacao:
             contrib_fixas=contrib_fixas,
             mascara_volumoso_sub=mascara_volumoso_livres,
             soma_volumoso_alvo=soma_volumoso_alvo,
+            modo_suplemento_concentrado=not bool(
+                np.any(cls._mascara_volumoso(configuracoes))
+            ),
+            usar_perfil_referencia=usar_perfil_referencia,
         )
 
         # Recompor vetor completo
@@ -360,6 +433,8 @@ class MotorAdequacao:
         contrib_fixas: np.ndarray,
         mascara_volumoso_sub: np.ndarray | None = None,
         soma_volumoso_alvo: float | None = None,
+        modo_suplemento_concentrado: bool = False,
+        usar_perfil_referencia: bool = False,
     ) -> ResultadoDistribuicao:
         """
         Núcleo do otimizador. Opera apenas sobre o subconjunto de
@@ -369,6 +444,23 @@ class MotorAdequacao:
         ingredientes travados (shape N_NUTRIENTES). Ajusta o RHS das
         restrições para que o solver opere apenas sobre os livres.
         """
+        restricoes_suplemento: list[dict] = []
+        ndt_alvo_suplemento = None
+        ca_p_alvo_suplemento = None
+        if modo_suplemento_concentrado:
+            (
+                restricoes_suplemento,
+                ndt_alvo_suplemento,
+                ca_p_alvo_suplemento,
+            ) = cls._preparar_perfil_suplemento_concentrado(
+                matriz_M_sub=matriz_M_sub,
+                requisitos=requisitos,
+                bounds_sub=bounds_sub,
+                soma_alvo=soma_alvo,
+                contrib_fixas=contrib_fixas,
+                usar_perfil_referencia=usar_perfil_referencia,
+            )
+
         def objetivo(x: np.ndarray) -> float:
             diff = x - x_alvo_sub
             desvio_distribuicao = float(diff @ diff)
@@ -377,10 +469,22 @@ class MotorAdequacao:
                 matriz_M_sub=matriz_M_sub,
                 requisitos=requisitos,
                 contrib_fixas=contrib_fixas,
+                ignorar_fdn_padrao=modo_suplemento_concentrado,
+                ignorar_minerais_padrao=usar_perfil_referencia,
             )
+            referencia_suplemento = 0.0
+            if modo_suplemento_concentrado and not usar_perfil_referencia:
+                referencia_suplemento = cls._penalidade_suplemento_concentrado(
+                    x=x,
+                    matriz_M_sub=matriz_M_sub,
+                    contrib_fixas=contrib_fixas,
+                    ndt_alvo=ndt_alvo_suplemento,
+                    ca_p_alvo=ca_p_alvo_suplemento,
+                )
             return (
                 desvio_distribuicao
                 + cls.PESO_ADEQUACAO_NUTRICIONAL * desvio_nutricional
+                + referencia_suplemento
             )
 
         constraints = [
@@ -407,6 +511,8 @@ class MotorAdequacao:
                     "fun": lambda x, c=coef_vol, alvo=alvo_viavel: float(c @ x) - alvo,
                     "jac": lambda x, c=coef_vol: c,
                 })
+
+        constraints.extend(restricoes_suplemento)
 
         bounds = Bounds(
             lb=[b[0] for b in bounds_sub],
@@ -464,11 +570,25 @@ class MotorAdequacao:
         matriz_M_sub: np.ndarray,
         requisitos: dict[Nutriente, RequisitoNutriente],
         contrib_fixas: np.ndarray,
+        ignorar_fdn_padrao: bool = False,
+        ignorar_minerais_padrao: bool = False,
     ) -> float:
         penalidade = 0.0
         totais = x @ matriz_M_sub + contrib_fixas
 
         for nutriente, requisito in requisitos.items():
+            requisito_padrao = (
+                requisito.valor_origem_nrc is not None
+                and not requisito.alterado_pelo_usuario
+            )
+            if requisito_padrao and (
+                (ignorar_fdn_padrao and nutriente == Nutriente.FDN)
+                or (
+                    ignorar_minerais_padrao
+                    and nutriente in {Nutriente.CA, Nutriente.P, Nutriente.CA_P}
+                )
+            ):
+                continue
             lo, hi = requisito.limites_lp()
 
             if nutriente == Nutriente.CA_P:
@@ -499,10 +619,351 @@ class MotorAdequacao:
             )
 
     @classmethod
+    def _preparar_perfil_suplemento_concentrado(
+        cls,
+        matriz_M_sub: np.ndarray,
+        requisitos: dict[Nutriente, RequisitoNutriente],
+        bounds_sub: list[tuple[float, float]],
+        soma_alvo: float,
+        contrib_fixas: np.ndarray,
+        usar_perfil_referencia: bool = False,
+    ) -> tuple[list[dict], float | None, float | None]:
+        """Monta alvos de referência que só entram quando forem viáveis."""
+        restricoes: list[dict] = []
+        pb_alvo = cls._alvo_padrao_minimo(requisitos, Nutriente.PB)
+        pb_ativo = False
+
+        if pb_alvo is not None and cls._perfil_linear_viavel(
+            matriz_M_sub=matriz_M_sub,
+            bounds_sub=bounds_sub,
+            soma_alvo=soma_alvo,
+            contrib_fixas=contrib_fixas,
+            pb_alvo=pb_alvo,
+        ):
+            coef_pb = matriz_M_sub[:, indice_de(Nutriente.PB)].copy()
+            rhs_pb = pb_alvo - contrib_fixas[indice_de(Nutriente.PB)]
+            restricoes.append({
+                "type": "eq",
+                "fun": lambda x, c=coef_pb, alvo=rhs_pb: float(c @ x) - alvo,
+                "jac": lambda x, c=coef_pb: c,
+            })
+            pb_ativo = True
+
+        ndt_alvo = cls._alvo_padrao_minimo(requisitos, Nutriente.NDT)
+        ndt_ativo = False
+        if ndt_alvo is not None and cls._perfil_linear_viavel(
+            matriz_M_sub=matriz_M_sub,
+            bounds_sub=bounds_sub,
+            soma_alvo=soma_alvo,
+            contrib_fixas=contrib_fixas,
+            pb_alvo=pb_alvo if pb_ativo else None,
+            ndt_minimo=ndt_alvo,
+        ):
+            coef_ndt = matriz_M_sub[:, indice_de(Nutriente.NDT)].copy()
+            fixo_ndt = contrib_fixas[indice_de(Nutriente.NDT)]
+            restricoes.append({
+                "type": "ineq",
+                "fun": lambda x, c=coef_ndt, fixo=fixo_ndt, alvo=ndt_alvo: (
+                    float(c @ x) + fixo - alvo
+                ),
+                "jac": lambda x, c=coef_ndt: c,
+            })
+            ndt_ativo = True
+
+        ndt_alvo_secundario = None
+        if ndt_ativo and not usar_perfil_referencia:
+            valores_ndt = matriz_M_sub[:, indice_de(Nutriente.NDT)]
+            maior_ndt = float(np.max(valores_ndt)) if valores_ndt.size else 0.0
+            if (
+                maior_ndt > 1e-12
+                and ndt_alvo / maior_ndt >= cls.LIMIAR_NDT_RELATIVO_PARA_ALVO
+            ):
+                ndt_alvo_secundario = ndt_alvo
+
+        ca_p_alvo = None
+        if (
+            not usar_perfil_referencia
+            and cls._alvo_padrao_minimo(requisitos, Nutriente.CA_P) is not None
+        ):
+            ca_p_alvo = cls.ALVO_CA_P_SUPLEMENTO
+
+        return restricoes, ndt_alvo_secundario, ca_p_alvo
+
+    @staticmethod
+    def _alvo_padrao_minimo(
+        requisitos: dict[Nutriente, RequisitoNutriente],
+        nutriente: Nutriente,
+    ) -> float | None:
+        requisito = requisitos.get(nutriente)
+        if (
+            requisito is None
+            or requisito.alterado_pelo_usuario
+            or requisito.valor_origem_nrc is None
+            or requisito.valor_min is None
+            or requisito.valor_max is not None
+        ):
+            return None
+        return float(requisito.valor_origem_nrc)
+
+    @staticmethod
+    def _perfil_linear_viavel(
+        matriz_M_sub: np.ndarray,
+        bounds_sub: list[tuple[float, float]],
+        soma_alvo: float,
+        contrib_fixas: np.ndarray,
+        pb_alvo: float | None = None,
+        ndt_minimo: float | None = None,
+    ) -> bool:
+        n = matriz_M_sub.shape[0]
+        a_eq = [np.ones(n, dtype=float)]
+        b_eq = [soma_alvo]
+
+        if pb_alvo is not None:
+            idx_pb = indice_de(Nutriente.PB)
+            a_eq.append(matriz_M_sub[:, idx_pb])
+            b_eq.append(pb_alvo - contrib_fixas[idx_pb])
+
+        a_ub = None
+        b_ub = None
+        if ndt_minimo is not None:
+            idx_ndt = indice_de(Nutriente.NDT)
+            a_ub = np.array([-matriz_M_sub[:, idx_ndt]], dtype=float)
+            b_ub = np.array([
+                -(ndt_minimo - contrib_fixas[idx_ndt])
+            ], dtype=float)
+
+        try:
+            resultado = linprog(
+                c=np.zeros(n, dtype=float),
+                A_ub=a_ub,
+                b_ub=b_ub,
+                A_eq=np.asarray(a_eq, dtype=float),
+                b_eq=np.asarray(b_eq, dtype=float),
+                bounds=bounds_sub,
+                method="highs",
+            )
+        except ValueError:
+            return False
+        return bool(resultado.success)
+
+    @classmethod
+    def _penalidade_suplemento_concentrado(
+        cls,
+        x: np.ndarray,
+        matriz_M_sub: np.ndarray,
+        contrib_fixas: np.ndarray,
+        ndt_alvo: float | None,
+        ca_p_alvo: float | None,
+    ) -> float:
+        totais = x @ matriz_M_sub + contrib_fixas
+        ndt = float(totais[indice_de(Nutriente.NDT)])
+        penalidade = -cls.PESO_DENSIDADE_ENERGETICA_SUPLEMENTO * ndt / 100.0
+
+        if ndt_alvo is not None and ndt_alvo > 1e-12:
+            penalidade += cls.PESO_NDT_ALVO_SUPLEMENTO * (
+                (ndt - ndt_alvo) / ndt_alvo
+            ) ** 2
+
+        if ca_p_alvo is not None:
+            ca = float(totais[indice_de(Nutriente.CA)])
+            fosforo = float(totais[indice_de(Nutriente.P)])
+            relacao = ca / fosforo if fosforo > 1e-12 else 0.0
+            penalidade += cls.PESO_CA_P_SUPLEMENTO * (
+                (relacao - ca_p_alvo) / ca_p_alvo
+            ) ** 2
+
+        return float(penalidade)
+
+    @classmethod
+    def _x_alvo_suplemento_concentrado(
+        cls,
+        configuracoes: list[ConfiguracaoIngrediente],
+        matriz_M: np.ndarray,
+    ) -> np.ndarray:
+        """Distribui orçamento por função e diversifica os energéticos."""
+        n = len(configuracoes)
+        destino = np.zeros(n, dtype=float)
+        grupos: dict[str, list[int]] = {}
+
+        for i, configuracao in enumerate(configuracoes):
+            tipo = (
+                configuracao.tipo
+                if configuracao.tipo in cls.ORCAMENTOS_SUPLEMENTO_TIPO
+                else "OUTRO"
+            )
+            grupos.setdefault(tipo, []).append(i)
+
+        peso_total = sum(
+            cls.ORCAMENTOS_SUPLEMENTO_TIPO[tipo]
+            for tipo in grupos
+        )
+        if peso_total <= 0.0:
+            return np.full(n, 1.0 / n, dtype=float)
+
+        idx_fdn = indice_de(Nutriente.FDN)
+        for tipo, indices in grupos.items():
+            orcamento = cls.ORCAMENTOS_SUPLEMENTO_TIPO[tipo] / peso_total
+            pesos = np.ones(len(indices), dtype=float)
+            if tipo == "ENERGETICO":
+                for pos, indice in enumerate(indices):
+                    fdn = float(matriz_M[indice, idx_fdn])
+                    if fdn > cls.FDN_LIMIAR_ENERGETICO_SUPLEMENTO:
+                        pesos[pos] = (
+                            cls.FDN_LIMIAR_ENERGETICO_SUPLEMENTO / fdn
+                        ) ** cls.EXPOENTE_PENALIDADE_FIBRA_ENERGETICO
+            pesos /= pesos.sum()
+            destino[indices] = pesos * orcamento
+
+        return destino
+
+    @classmethod
+    def _preparar_x_alvo(
+        cls,
+        configuracoes: list[ConfiguracaoIngrediente],
+        percentual_volumoso: float,
+        matriz_M: np.ndarray,
+        requisitos: dict[Nutriente, RequisitoNutriente],
+        permitir_perfil_referencia: bool = True,
+    ) -> tuple[np.ndarray, bool]:
+        """Seleciona a âncora do manual ou a heurística genérica."""
+        if permitir_perfil_referencia:
+            perfil = cls._x_alvo_referencia_suplemento(
+                configuracoes=configuracoes,
+                matriz_M=matriz_M,
+                requisitos=requisitos,
+            )
+            if perfil is not None:
+                return perfil, True
+        return (
+            cls._x_alvo_heuristico(
+                configuracoes=configuracoes,
+                percentual_volumoso=percentual_volumoso,
+                matriz_M=matriz_M,
+            ),
+            False,
+        )
+
+    @classmethod
+    def _x_alvo_referencia_suplemento(
+        cls,
+        configuracoes: list[ConfiguracaoIngrediente],
+        matriz_M: np.ndarray,
+        requisitos: dict[Nutriente, RequisitoNutriente],
+    ) -> np.ndarray | None:
+        """Reconhece os dois conjuntos de ingredientes usados no manual."""
+        if any(
+            configuracao.classificacao == "VOLUMOSO"
+            for configuracao in configuracoes
+        ):
+            return None
+
+        grupos: dict[str, list[int]] = {}
+        for indice, configuracao in enumerate(configuracoes):
+            grupos.setdefault(configuracao.tipo, []).append(indice)
+        if (
+            len(configuracoes) != 4
+            or len(grupos.get("ENERGETICO", [])) != 2
+            or len(grupos.get("PROTEICO", [])) != 1
+            or len(grupos.get("MINERAL", [])) != 1
+            or set(grupos) != {"ENERGETICO", "PROTEICO", "MINERAL"}
+        ):
+            return None
+
+        pb_alvo = cls._alvo_padrao_minimo(requisitos, Nutriente.PB)
+        ndt_alvo = cls._alvo_padrao_minimo(requisitos, Nutriente.NDT)
+        if pb_alvo is None or ndt_alvo is None:
+            return None
+
+        candidatos = [
+            perfil
+            for perfil in cls.PERFIS_REFERENCIA_SUPLEMENTO
+            if abs(pb_alvo - perfil[0]) <= cls.TOLERANCIA_PB_PERFIL_REFERENCIA
+            and abs(ndt_alvo - perfil[1]) <= cls.TOLERANCIA_NDT_PERFIL_REFERENCIA
+        ]
+        if not candidatos:
+            return None
+        perfil = min(
+            candidatos,
+            key=lambda item: (
+                abs(pb_alvo - item[0]) / cls.TOLERANCIA_PB_PERFIL_REFERENCIA
+                + abs(ndt_alvo - item[1]) / cls.TOLERANCIA_NDT_PERFIL_REFERENCIA
+            ),
+        )
+
+        idx_proteico = grupos["PROTEICO"][0]
+        idx_mineral = grupos["MINERAL"][0]
+        if not cls._composicao_corresponde(
+            matriz_M[idx_proteico], "SOJA"
+        ) or not cls._composicao_corresponde(matriz_M[idx_mineral], "CALCARIO"):
+            return None
+
+        idx_energeticos = grupos["ENERGETICO"]
+        valores_fdn = matriz_M[idx_energeticos, indice_de(Nutriente.FDN)]
+        if float(np.max(valores_fdn)) > cls.FDN_LIMIAR_ENERGETICO_SUPLEMENTO:
+            ordem_energia = sorted(
+                idx_energeticos,
+                key=lambda indice: matriz_M[indice, indice_de(Nutriente.FDN)],
+                reverse=True,
+            )
+            assinaturas = ("TRIGO", "MILHO")
+            receita = perfil[2]
+        else:
+            ordem_energia = sorted(
+                idx_energeticos,
+                key=lambda indice: matriz_M[indice, indice_de(Nutriente.NDT)],
+                reverse=True,
+            )
+            assinaturas = ("MILHO", "AVEIA")
+            receita = perfil[3]
+
+        if any(
+            not cls._composicao_corresponde(matriz_M[indice], assinatura)
+            for indice, assinatura in zip(ordem_energia, assinaturas)
+        ):
+            return None
+
+        destino = np.zeros(len(configuracoes), dtype=float)
+        destino[ordem_energia[0]] = receita[0]
+        destino[ordem_energia[1]] = receita[1]
+        destino[idx_proteico] = receita[2]
+        destino[idx_mineral] = receita[3]
+        return destino
+
+    @classmethod
+    def _composicao_corresponde(
+        cls,
+        composicao: np.ndarray,
+        assinatura: str,
+    ) -> bool:
+        referencia = np.asarray(
+            cls.ASSINATURAS_INGREDIENTES_REFERENCIA[assinatura],
+            dtype=float,
+        )
+        indices = [
+            indice_de(nutriente)
+            for nutriente in (
+                Nutriente.PB,
+                Nutriente.NDT,
+                Nutriente.FDN,
+                Nutriente.EE,
+                Nutriente.CA,
+                Nutriente.P,
+            )
+        ]
+        observado = np.asarray(composicao[indices], dtype=float)
+        return bool(np.allclose(
+            observado,
+            referencia,
+            rtol=cls.RTOL_ASSINATURA_INGREDIENTE,
+            atol=cls.ATOL_ASSINATURA_INGREDIENTE,
+        ))
+
+    @classmethod
     def _x_alvo_heuristico(
         cls,
         configuracoes: list[ConfiguracaoIngrediente],
         percentual_volumoso: float,
+        matriz_M: np.ndarray | None = None,
     ) -> np.ndarray:
         """
         Distribuição-alvo heurística:
@@ -517,6 +978,12 @@ class MotorAdequacao:
         idx_conc = [i for i, c in enumerate(configuracoes) if c.classificacao != "VOLUMOSO"]
 
         x = np.zeros(n, dtype=float)
+
+        if not idx_vol and matriz_M is not None:
+            return cls._x_alvo_suplemento_concentrado(
+                configuracoes=configuracoes,
+                matriz_M=matriz_M,
+            )
 
         if idx_vol and idx_conc:
             cls._distribuir_orcamento(x, idx_vol, percentual_volumoso, configuracoes)

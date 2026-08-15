@@ -106,6 +106,26 @@ COL_IDX = {
     'ca_p':        21,
 }
 
+CORRECOES_REFERENCIA = {
+    11: {
+        'pv_percent': 3.58,
+        'cms_kg': 1.074,
+        'pb_g': 151.0,
+        'pb_percent': 14.02,
+        'ndt_kg': 0.850,
+        'ndt_percent': 79.14,
+        'fdn_kg': 0.322,
+        'fdn_percent': 30.0,
+        'ee_kg': 0.075,
+        'ee_percent': 7.0,
+        'ca_g': 4.5,
+        'ca_percent': 0.42,
+        'p_g': 3.2,
+        'p_percent': 0.30,
+        'ca_p': 1.41,
+    },
+}
+
 EXCEL_PADRAO = os.path.join(
     os.path.dirname(__file__),
     '..',
@@ -125,6 +145,15 @@ def _float(val):
         return float(val)
     except (TypeError, ValueError):
         return None
+
+
+def _valor_numerico(row, campo, numero):
+    """Lê uma célula, aplicando apenas correções editoriais documentadas."""
+    numero_inteiro = int(numero) if float(numero).is_integer() else None
+    correcao = CORRECOES_REFERENCIA.get(numero_inteiro, {})
+    if campo in correcao:
+        return correcao[campo]
+    return _float(row[COL_IDX[campo]])
 
 
 class Command(BaseCommand):
@@ -241,12 +270,14 @@ class Command(BaseCommand):
                 ignorados += 1
                 continue
 
-            pv_kg = _float(row[COL_IDX['pv_kg']])
+            pv_kg = _valor_numerico(row, 'pv_kg', numero)
             if pv_kg is None:
                 ignorados += 1
                 continue
 
-            valor_col_compartilhada = _float(row[COL_IDX['pv_nascer_ou_leite']])
+            valor_col_compartilhada = _valor_numerico(
+                row, 'pv_nascer_ou_leite', numero
+            )
             pv_nascer_kg = valor_col_compartilhada if fase in FASES_GESTACAO else None
             producao_leite_kg_dia = valor_col_compartilhada if fase in FASES_LACTACAO else None
 
@@ -257,22 +288,22 @@ class Command(BaseCommand):
                 tipo_parto           = _tipo_parto(row[COL_IDX['tipo_parto']]),
                 pv_nascer_kg         = pv_nascer_kg,
                 producao_leite_kg_dia = producao_leite_kg_dia,
-                gmd_kg               = _float(row[COL_IDX['gmd_kg']]),
-                pv_percentual        = _float(row[COL_IDX['pv_percent']]),
-                cms_kg               = _float(row[COL_IDX['cms_kg']]),
-                pb_g                 = _float(row[COL_IDX['pb_g']]),
-                pb_percentual        = _float(row[COL_IDX['pb_percent']]),
-                ndt_kg               = _float(row[COL_IDX['ndt_kg']]),
-                ndt_percentual       = _float(row[COL_IDX['ndt_percent']]),
-                fdn_kg               = _float(row[COL_IDX['fdn_kg']]),
-                fdn_percentual       = _float(row[COL_IDX['fdn_percent']]),
-                ee_kg                = _float(row[COL_IDX['ee_kg']]),
-                ee_percentual        = _float(row[COL_IDX['ee_percent']]),
-                ca_g                 = _float(row[COL_IDX['ca_g']]),
-                ca_percentual        = _float(row[COL_IDX['ca_percent']]),
-                p_g                  = _float(row[COL_IDX['p_g']]),
-                p_percentual         = _float(row[COL_IDX['p_percent']]),
-                ca_p_percentual      = _float(row[COL_IDX['ca_p']]),
+                gmd_kg               = _valor_numerico(row, 'gmd_kg', numero),
+                pv_percentual        = _valor_numerico(row, 'pv_percent', numero),
+                cms_kg               = _valor_numerico(row, 'cms_kg', numero),
+                pb_g                 = _valor_numerico(row, 'pb_g', numero),
+                pb_percentual        = _valor_numerico(row, 'pb_percent', numero),
+                ndt_kg               = _valor_numerico(row, 'ndt_kg', numero),
+                ndt_percentual       = _valor_numerico(row, 'ndt_percent', numero),
+                fdn_kg               = _valor_numerico(row, 'fdn_kg', numero),
+                fdn_percentual       = _valor_numerico(row, 'fdn_percent', numero),
+                ee_kg                = _valor_numerico(row, 'ee_kg', numero),
+                ee_percentual        = _valor_numerico(row, 'ee_percent', numero),
+                ca_g                 = _valor_numerico(row, 'ca_g', numero),
+                ca_percentual        = _valor_numerico(row, 'ca_percent', numero),
+                p_g                  = _valor_numerico(row, 'p_g', numero),
+                p_percentual         = _valor_numerico(row, 'p_percent', numero),
+                ca_p_percentual      = _valor_numerico(row, 'ca_p', numero),
             )
             obj.save()
             criados += 1
