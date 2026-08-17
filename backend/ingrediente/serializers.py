@@ -52,6 +52,7 @@ class IngredienteSerializer(serializers.ModelSerializer):
             'ca',
             'p',
             'custo_kg',
+            'limite_min_participacao',
             'limite_max_participacao',
             'fonte_valadares',
             'dt_cadastro',
@@ -66,12 +67,19 @@ class IngredienteSerializer(serializers.ModelSerializer):
             'dt_atualizacao',
         ]
         extra_kwargs = {
+            'limite_min_participacao': {
+                'help_text': (
+                    'Percentual mínimo (0-100) na MS. Informe somente para '
+                    'inclusões tecnicamente obrigatórias. Para dose fixa, informe '
+                    'o mesmo valor no limite máximo.'
+                ),
+            },
             'limite_max_participacao': {
                 'help_text': (
                     'Percentual máximo (0-100) que este ingrediente pode representar '
                     'na matéria seca total da formulação. Deixe em branco para não '
                     'aplicar limite (ex.: bicarbonato de sódio costuma ser limitado a '
-                    'cerca de 1.5%).'
+                    'cerca de 1.5%). Para dose fixa, use o mesmo valor do limite mínimo.'
                 ),
             },
         }
@@ -81,6 +89,14 @@ class IngredienteSerializer(serializers.ModelSerializer):
         if value is not None and not (0.0 < value <= 100.0):
             raise serializers.ValidationError(
                 'O limite máximo de participação deve estar entre 0 (exclusive) e 100%.'
+            )
+        return value
+
+    def validate_limite_min_participacao(self, value):
+        """Aceita mínimo vazio ou percentual entre zero e cem."""
+        if value is not None and not (0.0 <= value < 100.0):
+            raise serializers.ValidationError(
+                'O limite mínimo de participação deve estar entre 0 e 100%.'
             )
         return value
 
@@ -104,6 +120,20 @@ class IngredienteSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({campo: f'{campo.upper()} {mensagem}.'})
         if 'custo_kg' in attrs and attrs['custo_kg'] < 0:
             raise serializers.ValidationError({'custo_kg': 'O custo não pode ser negativo.'})
+        limite_min = attrs.get(
+            'limite_min_participacao',
+            getattr(instance, 'limite_min_participacao', None),
+        )
+        limite_max = attrs.get(
+            'limite_max_participacao',
+            getattr(instance, 'limite_max_participacao', None),
+        )
+        if limite_min is not None and limite_max is not None and limite_min > limite_max:
+            raise serializers.ValidationError({
+                'limite_min_participacao': (
+                    'O limite mínimo não pode ser maior que o limite máximo.'
+                )
+            })
         return attrs
 
     def get_preco_kg_mn(self, obj):

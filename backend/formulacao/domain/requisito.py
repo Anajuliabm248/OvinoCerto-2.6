@@ -193,11 +193,18 @@ class RequisitoNutriente:
           percentual em relação ao limite violado
           (ex.: 0.20 = 20% abaixo/acima do limite).
         """
-        if self.valor_min is not None and valor_atual < self.valor_min:
+        tolerancia_numerica = 1e-9
+        if (
+            self.valor_min is not None
+            and valor_atual < self.valor_min - tolerancia_numerica
+        ):
             magnitude = (self.valor_min - valor_atual) / self.valor_min if self.valor_min else 0.0
             return StatusAdequacao.DEFICIT, abs(magnitude)
 
-        if self.valor_max is not None and valor_atual > self.valor_max:
+        if (
+            self.valor_max is not None
+            and valor_atual > self.valor_max + tolerancia_numerica
+        ):
             magnitude = (valor_atual - self.valor_max) / self.valor_max if self.valor_max else 0.0
             return StatusAdequacao.EXCESSO, abs(magnitude)
 

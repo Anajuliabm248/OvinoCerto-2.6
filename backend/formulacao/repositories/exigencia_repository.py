@@ -19,6 +19,7 @@ from django.db import transaction
 from exigencia_nrc.models import ExigenciaNRC
 from formulacao.domain.nutrientes import Nutriente
 from formulacao.domain.requisito import Operador, RequisitoNutriente
+from formulacao.engines.estimador_referencia import ContextoZootecnico
 from formulacao.models import (
     ConfiguracaoNutriente,
     ExigenciaConfigurada,
@@ -94,6 +95,36 @@ class ExigenciaRepository:
             ).get(formulacao_id=formulacao_id)
         except ExigenciaConfigurada.DoesNotExist:
             return None
+
+    @staticmethod
+    def get_contexto_zootecnico(
+        formulacao_id: int,
+    ) -> ContextoZootecnico | None:
+        """Contexto da linha NRC de origem usado apenas na estimativa inicial."""
+        try:
+            exigencia = (
+                ExigenciaConfigurada.objects
+                .select_related("exigencia_nrc_origem")
+                .get(formulacao_id=formulacao_id)
+            )
+        except ExigenciaConfigurada.DoesNotExist:
+            return None
+
+        origem = exigencia.exigencia_nrc_origem
+        if (
+            origem is None
+            or origem.pv_kg is None
+            or origem.gmd_kg is None
+            or exigencia.cms_kg is None
+        ):
+            return None
+        return ContextoZootecnico(
+            categoria=origem.categoria,
+            fase=origem.fase,
+            peso_vivo_kg=float(origem.pv_kg),
+            gmd_kg=float(origem.gmd_kg),
+            cms_kg=float(exigencia.cms_kg),
+        )
 
     @staticmethod
     def serializar_configuracao(formulacao_id: int) -> dict | None:

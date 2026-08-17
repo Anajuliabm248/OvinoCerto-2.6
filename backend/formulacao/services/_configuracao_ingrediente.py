@@ -23,14 +23,14 @@ from ingrediente.models import Ingrediente
 
 def configuracao_a_partir_do_ingrediente(
     ingrediente: Ingrediente | None,
-    limite_min: float = 0.0,
+    limite_min: float | None = None,
+    custo_kg_mn: float | None = None,
 ) -> ConfiguracaoIngrediente:
     """
     Constrói a ConfiguracaoIngrediente que o MotorAdequacao espera.
 
-    limite_max_participacao no model está em percentual (0-100) da MS;
-    aqui é convertido para fração (0-1). None = sem limite (1.0, ou
-    seja, limitado apenas pela soma total = 100%).
+    Os limites mínimo e máximo do model estão em percentual (0-100) da MS;
+    aqui são convertidos para fração (0-1). ``None`` significa sem limite.
 
     O limite convertido é sempre mantido dentro de [limite_min, 1.0]
     para nunca violar a validação de ConfiguracaoIngrediente, mesmo em
@@ -41,14 +41,25 @@ def configuracao_a_partir_do_ingrediente(
     ).upper()
     tipo = ((ingrediente.tipo if ingrediente else "outro") or "outro").upper()
 
+    if limite_min is None:
+        limite_min = 0.0
+        if ingrediente is not None and ingrediente.limite_min_participacao is not None:
+            limite_min = ingrediente.limite_min_participacao / 100.0
+    limite_min = max(0.0, min(1.0, limite_min))
+
     limite_max = 1.0
     if ingrediente is not None and ingrediente.limite_max_participacao is not None:
         limite_max = ingrediente.limite_max_participacao / 100.0
         limite_max = max(limite_min, min(1.0, limite_max))
+
+    custo_por_kg_ms = None
+    if custo_kg_mn is not None and ingrediente is not None and ingrediente.ms > 0.0:
+        custo_por_kg_ms = custo_kg_mn / (ingrediente.ms / 100.0)
 
     return ConfiguracaoIngrediente(
         classificacao=classificacao,
         tipo=tipo,
         limite_min=limite_min,
         limite_max=limite_max,
+        custo_por_kg_ms=custo_por_kg_ms,
     )

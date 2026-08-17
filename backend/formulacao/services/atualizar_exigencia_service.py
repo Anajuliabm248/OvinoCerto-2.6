@@ -121,14 +121,16 @@ class AtualizarExigenciaService:
             return valor, valor
 
         if operador == Operador.MAIOR_IGUAL:
-            if valor_min is None:
-                raise ValueError("Operador '>=' exige o campo 'valor_min'.")
-            return valor_min, None
+            limite = valor if valor is not None else valor_min
+            if limite is None:
+                raise ValueError("Operador '>=' exige o campo 'valor' ou 'valor_min'.")
+            return limite, None
 
         if operador == Operador.MENOR_IGUAL:
-            if valor_max is None:
-                raise ValueError("Operador '<=' exige o campo 'valor_max'.")
-            return None, valor_max
+            limite = valor if valor is not None else valor_max
+            if limite is None:
+                raise ValueError("Operador '<=' exige o campo 'valor' ou 'valor_max'.")
+            return None, limite
 
         if operador == Operador.ENTRE:
             if valor_min is None or valor_max is None:

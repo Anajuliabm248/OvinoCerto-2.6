@@ -311,6 +311,7 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
                 percentual_alvo_volumoso=serializer.validated_data[
                     "percentual_alvo_volumoso"
                 ],
+                objetivo=serializer.validated_data["objetivo"],
             )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)

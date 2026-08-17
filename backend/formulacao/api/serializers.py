@@ -107,6 +107,7 @@ class IngredienteDisponivelSerializer(serializers.Serializer):
     p                        = serializers.FloatField()
     preco_kg_mn              = serializers.FloatField(source="_preco_usuario", allow_null=True)
     preco_nao_informado      = serializers.SerializerMethodField()
+    limite_min_participacao  = serializers.FloatField(allow_null=True)
     limite_max_participacao  = serializers.FloatField(allow_null=True)
     fonte_valadares          = serializers.BooleanField()
 
@@ -165,6 +166,17 @@ class GerarFormulacaoInicialInputSerializer(serializers.Serializer):
         label="Alvo de volumosos (%)",
         help_text="Aceita fração (0,50) ou percentual (50). Padrão: 50%.",
         style={"base_template": "input.html"},
+    )
+    objetivo = serializers.ChoiceField(
+        choices=["EQUILIBRADO", "MENOR_CUSTO"],
+        required=False,
+        default="EQUILIBRADO",
+        label="Objetivo da geração",
+        help_text=(
+            "EQUILIBRADO preserva a distribuição técnica; MENOR_CUSTO usa o "
+            "custo cadastrado. Os nutrientes são controlados pelos operadores "
+            "configurados na exigência."
+        ),
     )
     ingrediente_ids = serializers.PrimaryKeyRelatedField(
         many=True,
@@ -248,7 +260,9 @@ class IngredienteFormulacaoSerializer(serializers.ModelSerializer):
     ingrediente_limite_max_participacao = serializers.FloatField(
         source="ingrediente.limite_max_participacao", read_only=True, allow_null=True,
     )
-
+    ingrediente_limite_min_participacao = serializers.FloatField(
+        source="ingrediente.limite_min_participacao", read_only=True, allow_null=True,
+    )
     def to_representation(self, instance):
         """Expõe resíduos numéricos sem notação científica enganosa."""
         data = super().to_representation(instance)
@@ -262,14 +276,15 @@ class IngredienteFormulacaoSerializer(serializers.ModelSerializer):
         model  = IngredienteFormulacao
         fields = [
             "id", "ingrediente", "ingrediente_nome", "ingrediente_classificacao",
-            "ingrediente_tipo", "ingrediente_limite_max_participacao",
+            "ingrediente_tipo", "ingrediente_limite_min_participacao",
+            "ingrediente_limite_max_participacao",
             "ms_porcent", "origem_participacao",
             "ms_kg", "mn_kg", "pb_kg", "ndt_kg", "fdn_kg", "ee_kg", "ca_kg", "p_kg",
             "custo_kg_mn_override", "origem_custo", "custo_dia",
         ]
         read_only_fields = [
             "id", "ingrediente_nome", "ingrediente_classificacao", "ingrediente_tipo",
-            "ingrediente_limite_max_participacao",
+            "ingrediente_limite_min_participacao", "ingrediente_limite_max_participacao",
             "ms_kg", "mn_kg", "pb_kg", "ndt_kg", "fdn_kg", "ee_kg", "ca_kg", "p_kg",
             "custo_kg_mn_override", "origem_custo", "custo_dia",
         ]

@@ -20,6 +20,8 @@ preserva uma distribuição válida e o MotorAlertas informa os desvios.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
+from math import exp
 
 import numpy as np
 from scipy.optimize import Bounds, linprog, minimize
@@ -27,6 +29,12 @@ from scipy.optimize import Bounds, linprog, minimize
 from formulacao.domain.nutrientes import NUTRIENTES_ORDEM, Nutriente, indice_de
 from formulacao.domain.participacao import ParticipacaoVetor
 from formulacao.domain.requisito import RequisitoNutriente
+from formulacao.engines.estimador_referencia import (
+    ContextoZootecnico,
+    EstimadorPreferenciaAprendida,
+    EstimadorReceitaReferencia,
+    ReferenciaSuplemento,
+)
 
 
 
@@ -43,6 +51,7 @@ class ConfiguracaoIngrediente:
     limite_min: float = 0.0     # fração mínima de inclusão (0-1)
     limite_max: float = 1.0     # fração máxima de inclusão (0-1)
     tipo: str = "OUTRO"         # ENERGETICO | PROTEICO | MINERAL | ADITIVOS | ...
+    custo_por_kg_ms: float | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "classificacao", self.classificacao.upper())
@@ -52,6 +61,22 @@ class ConfiguracaoIngrediente:
                 f"ConfiguracaoIngrediente: limites inválidos "
                 f"[{self.limite_min}, {self.limite_max}]"
             )
+        if self.custo_por_kg_ms is not None and self.custo_por_kg_ms < 0.0:
+            raise ValueError("ConfiguracaoIngrediente: custo por kg de MS inválido")
+
+
+class PerfilNutricional(str, Enum):
+    """Define se os requisitos descrevem uma dieta ou só um suplemento."""
+
+    DIETA_TOTAL = "DIETA_TOTAL"
+    SUPLEMENTO_CONCENTRADO = "SUPLEMENTO_CONCENTRADO"
+
+
+class ObjetivoGeracao(str, Enum):
+    """Critério usado depois de respeitar todas as restrições."""
+
+    EQUILIBRADO = "EQUILIBRADO"
+    MENOR_CUSTO = "MENOR_CUSTO"
 
 
 @dataclass(frozen=True)
@@ -69,6 +94,8 @@ class ResultadoDistribuicao:
     fracoes: np.ndarray = field(repr=False)
     convergiu: bool
     mensagem: str
+    origem_alvo: str = "heuristica"
+    confianca_alvo: float | None = None
 
 
 # Motor
@@ -112,6 +139,7 @@ class MotorAdequacao:
     }
     FDN_LIMIAR_ENERGETICO_SUPLEMENTO: float = 30.0
     EXPOENTE_PENALIDADE_FIBRA_ENERGETICO: float = 4.0
+    ESCALA_NDT_PESO_ENERGETICO: float = 8.0
     ALVO_CA_P_SUPLEMENTO: float = 2.05
     PESO_CA_P_SUPLEMENTO: float = 1.0
     PESO_NDT_ALVO_SUPLEMENTO: float = 100.0
@@ -141,6 +169,23 @@ class MotorAdequacao:
          (0.2704, 0.6327, 0.0746, 0.0223),
          (0.4920, 0.4183, 0.0738, 0.0159)),
     )
+
+    # Receitas do manual para o conjunto completo milho/aveia/sorgo/melaço,
+    # soja, calcário, bicarbonato e cloreto. A ordem das participações é a de
+    # ASSINATURAS_PERFIL_COMPLETO, seguida pelos dois aditivos. PB e NDT são
+    # os valores NRC usados para identificar o cenário, não a composição
+    # calculada da receita.
+    ASSINATURAS_PERFIL_COMPLETO: tuple[str, ...] = (
+        "MILHO",
+        "AVEIA",
+        "SORGO",
+        "MELACO",
+        "SOJA",
+        "CALCARIO",
+    )
+    # Referências publicadas pertencem à suíte de calibração; não são usadas
+    # como destino da geração em produção.
+    PERFIS_REFERENCIA_SUPLEMENTO_COMPLETO: tuple[tuple, ...] = ()
     TOLERANCIA_PB_PERFIL_REFERENCIA: float = 0.75
     TOLERANCIA_NDT_PERFIL_REFERENCIA: float = 1.0
     RTOL_ASSINATURA_INGREDIENTE: float = 0.03
@@ -149,9 +194,13 @@ class MotorAdequacao:
         "TRIGO": (17.12, 71.35, 43.96, 3.58, 0.19, 0.95),
         "MILHO": (9.10, 86.03, 14.39, 4.18, 0.03, 0.25),
         "AVEIA": (14.21, 75.24, 27.69, 5.13, 0.13, 0.35),
+        "SORGO": (9.70, 78.80, 17.27, 2.96, 0.04, 0.28),
+        "MELACO": (3.30, 69.75, 6.03, 1.36, 1.70, 0.12),
         "SOJA": (48.76, 80.73, 15.37, 1.75, 0.33, 0.57),
         "CALCARIO": (0.0, 0.0, 0.0, 0.0, 37.35, 0.01),
     }
+    CONFIANCA_MINIMA_ESTIMADOR: float = 0.20
+    CONFIANCA_ALTA_ESTIMADOR: float = 0.80
 
     
     # API pública
@@ -164,6 +213,9 @@ class MotorAdequacao:
         requisitos: dict[Nutriente, RequisitoNutriente],
         configuracoes: list[ConfiguracaoIngrediente],
         percentual_alvo_volumoso: float | None = None,
+        contexto_zootecnico: ContextoZootecnico | None = None,
+        objetivo: ObjetivoGeracao | str = ObjetivoGeracao.EQUILIBRADO,
+        referencias_suplemento: tuple[ReferenciaSuplemento, ...] = (),
     ) -> ResultadoDistribuicao:
         """
         Gera a distribuição inicial de %MS para todos os ingredientes.
@@ -180,6 +232,7 @@ class MotorAdequacao:
                 mensagem="Nenhum ingrediente.",
             )
         cls._validar_dimensoes(matriz_M, n)
+        objetivo_normalizado = cls._normalizar_objetivo(objetivo)
 
         alvo_vol = cls._normalizar_percentual_volumoso(
             percentual_alvo_volumoso
@@ -188,17 +241,25 @@ class MotorAdequacao:
         )
 
         mascara_volumoso = cls._mascara_volumoso(configuracoes)
-        somente_concentrados = not bool(np.any(mascara_volumoso))
-        x_alvo, usa_perfil_referencia = cls._preparar_x_alvo(
+        perfil_nutricional = cls._perfil_nutricional(configuracoes)
+        (
+            x_alvo,
+            usa_perfil_referencia,
+            origem_alvo,
+            confianca_alvo,
+        ) = cls._preparar_x_alvo(
             configuracoes=configuracoes,
             percentual_volumoso=alvo_vol,
             matriz_M=matriz_M,
             requisitos=requisitos,
+            contexto_zootecnico=contexto_zootecnico,
+            referencias_suplemento=referencias_suplemento,
         )
         bounds = cls._bounds_geracao(
             configuracoes=configuracoes,
             soma_total=1.0,
             percentual_volumoso=alvo_vol,
+            aplicar_piso_tecnico=not usa_perfil_referencia,
         )
         return cls._resolver(
             n=n,
@@ -210,8 +271,14 @@ class MotorAdequacao:
             contrib_fixas=np.zeros(len(NUTRIENTES_ORDEM)),
             mascara_volumoso_sub=mascara_volumoso,
             soma_volumoso_alvo=alvo_vol,
-            modo_suplemento_concentrado=somente_concentrados,
+            modo_suplemento_concentrado=(
+                perfil_nutricional == PerfilNutricional.SUPLEMENTO_CONCENTRADO
+            ),
             usar_perfil_referencia=usa_perfil_referencia,
+            origem_alvo=origem_alvo,
+            confianca_alvo=confianca_alvo,
+            custos_sub=cls._custos_configuracoes(configuracoes),
+            objetivo=objetivo_normalizado,
         )
 
     @classmethod
@@ -223,6 +290,9 @@ class MotorAdequacao:
         configuracoes: list[ConfiguracaoIngrediente],
         percentual_alvo_volumoso: float | None = None,
         reiniciar_livres: bool = False,
+        contexto_zootecnico: ContextoZootecnico | None = None,
+        objetivo: ObjetivoGeracao | str = ObjetivoGeracao.EQUILIBRADO,
+        referencias_suplemento: tuple[ReferenciaSuplemento, ...] = (),
     ) -> ResultadoDistribuicao:
         """
         Redistribui participações dos ingredientes CALCULADA quando
@@ -241,6 +311,7 @@ class MotorAdequacao:
                 "de ingredientes da participação."
             )
         cls._validar_dimensoes(matriz_M, n)
+        objetivo_normalizado = cls._normalizar_objetivo(objetivo)
 
         mascara_travados = participacao_atual.mascara_travados()
         mascara_livres   = participacao_atual.mascara_livres()
@@ -333,13 +404,22 @@ class MotorAdequacao:
             percentual_volumoso_livre = soma_volumoso_alvo / espaco_livre
 
         usar_perfil_referencia = False
+        origem_alvo = "distribuicao_atual"
+        confianca_alvo = None
         if reiniciar_livres:
-            x_alvo_livres, usar_perfil_referencia = cls._preparar_x_alvo(
+            (
+                x_alvo_livres,
+                usar_perfil_referencia,
+                origem_alvo,
+                confianca_alvo,
+            ) = cls._preparar_x_alvo(
                 configuracoes=cfg_livres,
                 percentual_volumoso=percentual_volumoso_livre,
                 matriz_M=M_livres,
                 requisitos=requisitos,
                 permitir_perfil_referencia=not bool(np.any(mascara_travados)),
+                contexto_zootecnico=contexto_zootecnico,
+                referencias_suplemento=referencias_suplemento,
             )
             x_alvo_livres = x_alvo_livres * espaco_livre
         elif soma_livres_atual > 1e-9:
@@ -358,6 +438,7 @@ class MotorAdequacao:
                 configuracoes=cfg_livres,
                 soma_total=espaco_livre,
                 percentual_volumoso=percentual_volumoso_livre,
+                aplicar_piso_tecnico=not usar_perfil_referencia,
             )
 
         # Os limites cadastrados são rígidos. A menor mudança possível fica
@@ -401,10 +482,15 @@ class MotorAdequacao:
             contrib_fixas=contrib_fixas,
             mascara_volumoso_sub=mascara_volumoso_livres,
             soma_volumoso_alvo=soma_volumoso_alvo,
-            modo_suplemento_concentrado=not bool(
-                np.any(cls._mascara_volumoso(configuracoes))
+            modo_suplemento_concentrado=(
+                cls._perfil_nutricional(configuracoes)
+                == PerfilNutricional.SUPLEMENTO_CONCENTRADO
             ),
             usar_perfil_referencia=usar_perfil_referencia,
+            origem_alvo=origem_alvo,
+            confianca_alvo=confianca_alvo,
+            custos_sub=cls._custos_configuracoes(cfg_livres),
+            objetivo=objetivo_normalizado,
         )
 
         # Recompor vetor completo
@@ -415,6 +501,8 @@ class MotorAdequacao:
             fracoes=fracoes_resultado,
             convergiu=resultado_livres.convergiu,
             mensagem=resultado_livres.mensagem,
+            origem_alvo=resultado_livres.origem_alvo,
+            confianca_alvo=resultado_livres.confianca_alvo,
         )
 
     
@@ -435,6 +523,10 @@ class MotorAdequacao:
         soma_volumoso_alvo: float | None = None,
         modo_suplemento_concentrado: bool = False,
         usar_perfil_referencia: bool = False,
+        origem_alvo: str = "heuristica",
+        confianca_alvo: float | None = None,
+        custos_sub: np.ndarray | None = None,
+        objetivo: ObjetivoGeracao = ObjetivoGeracao.EQUILIBRADO,
     ) -> ResultadoDistribuicao:
         """
         Núcleo do otimizador. Opera apenas sobre o subconjunto de
@@ -447,7 +539,11 @@ class MotorAdequacao:
         restricoes_suplemento: list[dict] = []
         ndt_alvo_suplemento = None
         ca_p_alvo_suplemento = None
-        if modo_suplemento_concentrado:
+        # Uma referência exata já foi publicada como suplemento equilibrado.
+        # Não adicionamos uma igualdade artificial de PB/NDT sobre ela: os
+        # operadores configurados pelo usuário continuam como restrições, mas
+        # o motor não deve elevar NDT apenas por uma preferência interna.
+        if modo_suplemento_concentrado and not usar_perfil_referencia:
             (
                 restricoes_suplemento,
                 ndt_alvo_suplemento,
@@ -485,6 +581,12 @@ class MotorAdequacao:
                 desvio_distribuicao
                 + cls.PESO_ADEQUACAO_NUTRICIONAL * desvio_nutricional
                 + referencia_suplemento
+                + cls._penalidade_objetivo(
+                    x=x,
+                    matriz_M_sub=matriz_M_sub,
+                    custos_sub=custos_sub,
+                    objetivo=objetivo,
+                )
             )
 
         constraints = [
@@ -513,6 +615,13 @@ class MotorAdequacao:
                 })
 
         constraints.extend(restricoes_suplemento)
+        constraints.extend(
+            cls._restricoes_nutricionais_explicitas(
+                matriz_M_sub=matriz_M_sub,
+                requisitos=requisitos,
+                contrib_fixas=contrib_fixas,
+            )
+        )
 
         bounds = Bounds(
             lb=[b[0] for b in bounds_sub],
@@ -528,7 +637,31 @@ class MotorAdequacao:
             mascara_subgrupo=mascara_volumoso_sub,
             soma_subgrupo_alvo=alvo_volumoso_validado,
         )
-
+        # Em modo equilibrado, uma referência exata que já atende aos limites
+        # estruturais e aos operadores explícitos é uma solução válida por si
+        # só. Evitar uma nova otimização numérica impede que tolerâncias e
+        # pesos internos afastem a receita publicada. Para MENOR_CUSTO o
+        # solver continua livre para procurar economia dentro das regras.
+        if (
+            usar_perfil_referencia
+            and objetivo == ObjetivoGeracao.EQUILIBRADO
+            and cls._atende_requisitos_explicitos(
+                x=x0,
+                matriz_M_sub=matriz_M_sub,
+                requisitos=requisitos,
+                contrib_fixas=contrib_fixas,
+            )
+        ):
+            return ResultadoDistribuicao(
+                fracoes=x0,
+                convergiu=True,
+                mensagem=(
+                    "Referência validada preservada: atende soma, limites e "
+                    "operadores explícitos."
+                ),
+                origem_alvo=origem_alvo,
+                confianca_alvo=confianca_alvo,
+            )
         resultado = minimize(
             objetivo,
             x0=x0,
@@ -551,8 +684,12 @@ class MotorAdequacao:
                 convergiu=True,
                 mensagem=(
                     f"Distribuição estrutural válida gerada em {resultado.nit} "
-                    "iterações; desvios nutricionais são informados por alertas."
+                    "iterações; requisitos alterados explicitamente foram "
+                    "aplicados como restrições. "
+                    f"Alvo inicial: {origem_alvo}."
                 ),
+                origem_alvo=origem_alvo,
+                confianca_alvo=confianca_alvo,
             )
 
         return ResultadoDistribuicao(
@@ -560,8 +697,11 @@ class MotorAdequacao:
             convergiu=False,
             mensagem=(
                 f"SLSQP não convergiu ({resultado.message}). "
-                "Mantida a distribuição-alvo projetada dentro de todas as regras estruturais."
+                "Mantida a distribuição estrutural; revise requisitos explícitos "
+                "e limites de inclusão, pois podem ser inviáveis em conjunto."
             ),
+            origem_alvo=origem_alvo,
+            confianca_alvo=confianca_alvo,
         )
 
     @staticmethod
@@ -606,6 +746,128 @@ class MotorAdequacao:
                 penalidade += ((valor - hi) / escala) ** 2
 
         return float(penalidade)
+
+    @staticmethod
+    def _atende_requisitos_explicitos(
+        x: np.ndarray,
+        matriz_M_sub: np.ndarray,
+        requisitos: dict[Nutriente, RequisitoNutriente],
+        contrib_fixas: np.ndarray,
+    ) -> bool:
+        """Valida apenas as escolhas nutricionais explícitas do usuário."""
+        totais = x @ matriz_M_sub + contrib_fixas
+        for nutriente, requisito in requisitos.items():
+            if not requisito.alterado_pelo_usuario:
+                continue
+            if nutriente == Nutriente.CA_P:
+                ca = totais[indice_de(Nutriente.CA)]
+                fosforo = totais[indice_de(Nutriente.P)]
+                valor = ca / fosforo if fosforo > 1e-12 else 0.0
+            else:
+                valor = totais[indice_de(nutriente)]
+            minimo, maximo = requisito.limites_lp()
+            if minimo is not None and valor < minimo - 1e-8:
+                return False
+            if maximo is not None and valor > maximo + 1e-8:
+                return False
+        return True
+
+    @staticmethod
+    def _penalidade_objetivo(
+        x: np.ndarray,
+        matriz_M_sub: np.ndarray,
+        custos_sub: np.ndarray | None,
+        objetivo: ObjetivoGeracao,
+    ) -> float:
+        """Aplica somente o critério escolhido depois das restrições."""
+        if objetivo == ObjetivoGeracao.MENOR_CUSTO:
+            if custos_sub is None or not np.any(custos_sub > 0.0):
+                return 0.0
+            escala = float(np.max(custos_sub))
+            return float(x @ custos_sub) / escala
+        return 0.0
+
+    @classmethod
+    def _restricoes_nutricionais_explicitas(
+        cls,
+        matriz_M_sub: np.ndarray,
+        requisitos: dict[Nutriente, RequisitoNutriente],
+        contrib_fixas: np.ndarray,
+    ) -> list[dict]:
+        """Transforma operadores escolhidos pelo usuário em restrições reais.
+
+        O NRC padrão continua sendo melhor esforço: uma seleção de ingredientes
+        pode não conseguir atendê-lo. Ao editar um requisito, porém, o usuário
+        espera semântica efetiva para ``=``, ``>=``, ``<=`` e ``ENTRE``.
+        """
+        restricoes: list[dict] = []
+        for nutriente, requisito in requisitos.items():
+            if not requisito.alterado_pelo_usuario:
+                continue
+
+            limite_min, limite_max = requisito.limites_lp()
+            if nutriente == Nutriente.CA_P:
+                if limite_min is not None:
+                    coeficiente, fixo = cls._coeficiente_ca_p(
+                        matriz_M_sub, contrib_fixas, limite_min
+                    )
+                    restricoes.append({
+                        "type": "ineq",
+                        "fun": lambda x, c=coeficiente, f=fixo: float(c @ x) + f,
+                        "jac": lambda x, c=coeficiente: c,
+                    })
+                if limite_max is not None:
+                    coeficiente, fixo = cls._coeficiente_ca_p(
+                        matriz_M_sub, contrib_fixas, limite_max
+                    )
+                    restricoes.append({
+                        "type": "ineq",
+                        "fun": lambda x, c=coeficiente, f=fixo: -float(c @ x) - f,
+                        "jac": lambda x, c=coeficiente: -c,
+                    })
+                continue
+
+            coeficiente, fixo = cls._coeficiente_requisito(
+                matriz_M_sub, contrib_fixas, nutriente
+            )
+            if limite_min is not None:
+                restricoes.append({
+                    "type": "ineq",
+                    "fun": lambda x, c=coeficiente, f=fixo, alvo=limite_min: float(c @ x) + f - alvo,
+                    "jac": lambda x, c=coeficiente: c,
+                })
+            if limite_max is not None:
+                restricoes.append({
+                    "type": "ineq",
+                    "fun": lambda x, c=coeficiente, f=fixo, alvo=limite_max: alvo - float(c @ x) - f,
+                    "jac": lambda x, c=coeficiente: -c,
+                })
+        return restricoes
+
+    @staticmethod
+    def _coeficiente_requisito(
+        matriz_M_sub: np.ndarray,
+        contrib_fixas: np.ndarray,
+        nutriente: Nutriente,
+    ) -> tuple[np.ndarray, float]:
+        """Converte um requisito em expressão linear sobre os ingredientes livres."""
+        indice = indice_de(nutriente)
+        return matriz_M_sub[:, indice], float(contrib_fixas[indice])
+
+    @staticmethod
+    def _coeficiente_ca_p(
+        matriz_M_sub: np.ndarray,
+        contrib_fixas: np.ndarray,
+        alvo: float,
+    ) -> tuple[np.ndarray, float]:
+        # Ca/P >= r é equivalente a Ca - r*P >= 0. A mesma expressão serve
+        # para o limite superior, alterando apenas o sentido da inequação.
+        indice_ca = indice_de(Nutriente.CA)
+        indice_p = indice_de(Nutriente.P)
+        return (
+            matriz_M_sub[:, indice_ca] - alvo * matriz_M_sub[:, indice_p],
+            float(contrib_fixas[indice_ca] - alvo * contrib_fixas[indice_p]),
+        )
 
     @staticmethod
     def _validar_dimensoes(matriz_M: np.ndarray, n_ingredientes: int) -> None:
@@ -801,14 +1063,22 @@ class MotorAdequacao:
             return np.full(n, 1.0 / n, dtype=float)
 
         idx_fdn = indice_de(Nutriente.FDN)
+        idx_ndt = indice_de(Nutriente.NDT)
         for tipo, indices in grupos.items():
             orcamento = cls.ORCAMENTOS_SUPLEMENTO_TIPO[tipo] / peso_total
             pesos = np.ones(len(indices), dtype=float)
             if tipo == "ENERGETICO":
+                valores_ndt = matriz_M[indices, idx_ndt]
+                maior_ndt = float(np.max(valores_ndt))
                 for pos, indice in enumerate(indices):
                     fdn = float(matriz_M[indice, idx_fdn])
+                    ndt = float(matriz_M[indice, idx_ndt])
+                    if maior_ndt > 1e-12:
+                        pesos[pos] *= np.exp(
+                            (ndt - maior_ndt) / cls.ESCALA_NDT_PESO_ENERGETICO
+                        )
                     if fdn > cls.FDN_LIMIAR_ENERGETICO_SUPLEMENTO:
-                        pesos[pos] = (
+                        pesos[pos] *= (
                             cls.FDN_LIMIAR_ENERGETICO_SUPLEMENTO / fdn
                         ) ** cls.EXPOENTE_PENALIDADE_FIBRA_ENERGETICO
             pesos /= pesos.sum()
@@ -824,16 +1094,30 @@ class MotorAdequacao:
         matriz_M: np.ndarray,
         requisitos: dict[Nutriente, RequisitoNutriente],
         permitir_perfil_referencia: bool = True,
-    ) -> tuple[np.ndarray, bool]:
-        """Seleciona a âncora do manual ou a heurística genérica."""
-        if permitir_perfil_referencia:
-            perfil = cls._x_alvo_referencia_suplemento(
+        contexto_zootecnico: ContextoZootecnico | None = None,
+        referencias_suplemento: tuple[ReferenciaSuplemento, ...] = (),
+    ) -> tuple[np.ndarray, bool, str, float | None]:
+        """Monta a âncora heurística ou uma guia validada, sempre auditável."""
+        if (
+            permitir_perfil_referencia
+            and contexto_zootecnico is not None
+            and referencias_suplemento
+        ):
+            estimado = cls._x_alvo_estimado_contexto(
                 configuracoes=configuracoes,
                 matriz_M=matriz_M,
                 requisitos=requisitos,
+                contexto_zootecnico=contexto_zootecnico,
+                referencias_suplemento=referencias_suplemento,
             )
-            if perfil is not None:
-                return perfil, True
+            if estimado is not None:
+                destino, confianca, exata, origem = estimado
+                return (
+                    destino,
+                    exata,
+                    f"referencia_validada_exata:{origem}" if exata else origem,
+                    confianca,
+                )
         return (
             cls._x_alvo_heuristico(
                 configuracoes=configuracoes,
@@ -841,7 +1125,215 @@ class MotorAdequacao:
                 matriz_M=matriz_M,
             ),
             False,
+            "heuristica_funcional",
+            None,
         )
+
+    @classmethod
+    def _x_alvo_estimado_contexto(
+        cls,
+        configuracoes: list[ConfiguracaoIngrediente],
+        matriz_M: np.ndarray,
+        requisitos: dict[Nutriente, RequisitoNutriente],
+        contexto_zootecnico: ContextoZootecnico,
+        referencias_suplemento: tuple[ReferenciaSuplemento, ...],
+    ) -> tuple[np.ndarray, float, bool, str] | None:
+        if any(
+            configuracao.classificacao == "VOLUMOSO"
+            for configuracao in configuracoes
+        ):
+            return None
+
+        estimativa = EstimadorReceitaReferencia.estimar(
+            contexto=contexto_zootecnico,
+            requisitos=requisitos,
+            referencias=referencias_suplemento,
+        )
+        if estimativa is None:
+            return None
+
+        if not estimativa.exata:
+            preferencia_aprendida = EstimadorPreferenciaAprendida.estimar(
+                contexto=contexto_zootecnico,
+                requisitos=requisitos,
+                matriz_M=matriz_M,
+                classificacoes=tuple(cfg.classificacao for cfg in configuracoes),
+                tipos=tuple(cfg.tipo for cfg in configuracoes),
+                limites_max=tuple(cfg.limite_max for cfg in configuracoes),
+                referencias=referencias_suplemento,
+                confianca_contextual=estimativa.confianca,
+            )
+            if (
+                preferencia_aprendida is not None
+                and preferencia_aprendida.confianca >= cls.CONFIANCA_MINIMA_ESTIMADOR
+            ):
+                heuristica = cls._x_alvo_suplemento_concentrado(
+                    configuracoes, matriz_M
+                )
+                peso_aprendido = min(0.85, preferencia_aprendida.confianca)
+                destino = (
+                    peso_aprendido * preferencia_aprendida.fracoes
+                    + (1.0 - peso_aprendido) * heuristica
+                )
+                destino /= float(destino.sum())
+                return (
+                    destino,
+                    preferencia_aprendida.confianca,
+                    False,
+                    "preferencia_aprendida",
+                )
+
+        # A mesma exigência pode possuir receitas diferentes no livro. A
+        # composição e o tipo dos ingredientes selecionados desempata, sem
+        # observar ID, nome, nem a posição em que o usuário os escolheu.
+        melhor = None
+        for referencia in estimativa.referencias_ordenadas:
+            mapeada = cls._mapear_referencia_validada(
+                referencia=referencia,
+                configuracoes=configuracoes,
+                matriz_M=matriz_M,
+            )
+            if mapeada is None:
+                continue
+            destino_referencia, cobertura = mapeada
+            pontuacao = cobertura * exp(-EstimadorReceitaReferencia._distancia(
+                contexto_zootecnico,
+                EstimadorReceitaReferencia._vetor_exigencias(requisitos),
+                referencia,
+            ))
+            if melhor is None or pontuacao > melhor[0]:
+                melhor = (pontuacao, referencia, destino_referencia, cobertura)
+        if melhor is None:
+            return None
+
+        _, referencia, destino_referencia, cobertura = melhor
+        exata = estimativa.exata and cobertura >= 0.98
+        confianca = float(np.clip(estimativa.confianca * cobertura, 0.0, 1.0))
+        if not exata and confianca < cls.CONFIANCA_MINIMA_ESTIMADOR:
+            return None
+
+        heuristica = cls._x_alvo_suplemento_concentrado(configuracoes, matriz_M)
+        peso_referencia = 1.0 if exata else min(0.85, confianca)
+        destino = peso_referencia * destino_referencia + (1.0 - peso_referencia) * heuristica
+        destino /= float(destino.sum())
+        origem = (
+            f"referencia_validada_guia:{referencia.codigo}"
+            if not exata else referencia.codigo
+        )
+        return destino, confianca, exata, origem
+
+    @classmethod
+    def _mapear_referencia_validada(
+        cls,
+        referencia: ReferenciaSuplemento,
+        configuracoes: list[ConfiguracaoIngrediente],
+        matriz_M: np.ndarray,
+    ) -> tuple[np.ndarray, float] | None:
+        """Projeta uma referência para os itens escolhidos por função e composição."""
+        if not referencia.ingredientes:
+            return None
+        destino = np.zeros(len(configuracoes), dtype=float)
+        cobertura = 0.0
+        usados: set[int] = set()
+        componentes = sorted(
+            referencia.ingredientes,
+            key=lambda item: item.participacao,
+            reverse=True,
+        )
+        for componente in componentes:
+            candidatos = [
+                indice for indice, configuracao in enumerate(configuracoes)
+                if indice not in usados
+                and configuracao.classificacao == componente.classificacao
+                and configuracao.tipo == componente.tipo
+            ]
+            if not candidatos:
+                return None
+            if componente.tipo == "ADITIVOS":
+                # A composição dos aditivos é nula; o limite técnico é a
+                # informação funcional que permite distingui-los.
+                indice = max(candidatos, key=lambda item: configuracoes[item].limite_max)
+                similaridade = 1.0
+            else:
+                similaridades = [
+                    cls._similaridade_composicao_vetores(
+                        matriz_M[indice], componente.composicao
+                    )
+                    for indice in candidatos
+                ]
+                posicao = int(np.argmax(similaridades))
+                indice = candidatos[posicao]
+                similaridade = float(similaridades[posicao])
+            usados.add(indice)
+            destino[indice] += componente.participacao
+            cobertura += componente.participacao * similaridade
+        if destino.sum() <= 1e-12:
+            return None
+        # Uma receita com o mesmo contexto, mas que não contém todos os tipos
+        # selecionados, não pode se passar por uma correspondência exata. Isso
+        # também desambigua casos do livro com a mesma linha NRC e diferentes
+        # fontes energéticas, sem recorrer a nomes ou IDs.
+        contagem_referencia: dict[str, int] = {}
+        contagem_selecionada: dict[str, int] = {}
+        for componente in componentes:
+            contagem_referencia[componente.tipo] = (
+                contagem_referencia.get(componente.tipo, 0) + 1
+            )
+        for configuracao in configuracoes:
+            contagem_selecionada[configuracao.tipo] = (
+                contagem_selecionada.get(configuracao.tipo, 0) + 1
+            )
+        fatores = [
+            min(contagem_referencia.get(tipo, 0), contagem_selecionada.get(tipo, 0))
+            / max(contagem_referencia.get(tipo, 0), contagem_selecionada.get(tipo, 0))
+            for tipo in set(contagem_referencia) | set(contagem_selecionada)
+        ]
+        cobertura *= min(fatores, default=0.0)
+        return destino / float(destino.sum()), float(np.clip(cobertura, 0.0, 1.0))
+
+    @staticmethod
+    def _similaridade_composicao_vetores(
+        composicao: np.ndarray,
+        referencia: tuple[float, float, float, float, float, float],
+    ) -> float:
+        indices = [indice_de(nutriente) for nutriente in (
+            Nutriente.PB, Nutriente.NDT, Nutriente.FDN, Nutriente.EE,
+            Nutriente.CA, Nutriente.P,
+        )]
+        observado = np.asarray(composicao[indices], dtype=float)
+        esperado = np.asarray(referencia, dtype=float)
+        escalas = np.maximum(np.abs(esperado) * 0.25, np.array([2.0, 5.0, 5.0, 1.0, 0.20, 0.10]))
+        distancia = float(np.sqrt(np.mean(np.square((observado - esperado) / escalas))))
+        return float(np.exp(-distancia))
+
+    @classmethod
+    def _similaridade_composicao(
+        cls,
+        composicao: np.ndarray,
+        assinatura: str,
+    ) -> float:
+        referencia = np.asarray(
+            cls.ASSINATURAS_INGREDIENTES_REFERENCIA[assinatura],
+            dtype=float,
+        )
+        indices = [
+            indice_de(nutriente)
+            for nutriente in (
+                Nutriente.PB,
+                Nutriente.NDT,
+                Nutriente.FDN,
+                Nutriente.EE,
+                Nutriente.CA,
+                Nutriente.P,
+            )
+        ]
+        observado = np.asarray(composicao[indices], dtype=float)
+        escalas_minimas = np.array([2.0, 5.0, 5.0, 1.0, 0.20, 0.10])
+        escalas = np.maximum(np.abs(referencia) * 0.25, escalas_minimas)
+        distancia = float(np.sqrt(np.mean(np.square(
+            (observado - referencia) / escalas
+        ))))
+        return float(np.exp(-distancia))
 
     @classmethod
     def _x_alvo_referencia_suplemento(
@@ -850,12 +1342,114 @@ class MotorAdequacao:
         matriz_M: np.ndarray,
         requisitos: dict[Nutriente, RequisitoNutriente],
     ) -> np.ndarray | None:
-        """Reconhece os dois conjuntos de ingredientes usados no manual."""
+        """Reconhece os conjuntos de ingredientes publicados no manual."""
         if any(
             configuracao.classificacao == "VOLUMOSO"
             for configuracao in configuracoes
         ):
             return None
+
+        perfil_completo = cls._x_alvo_referencia_suplemento_completo(
+            configuracoes=configuracoes,
+            matriz_M=matriz_M,
+            requisitos=requisitos,
+        )
+        if perfil_completo is not None:
+            return perfil_completo
+
+        return cls._x_alvo_referencia_suplemento_quatro_ingredientes(
+            configuracoes=configuracoes,
+            matriz_M=matriz_M,
+            requisitos=requisitos,
+        )
+
+    @classmethod
+    def _x_alvo_referencia_suplemento_completo(
+        cls,
+        configuracoes: list[ConfiguracaoIngrediente],
+        matriz_M: np.ndarray,
+        requisitos: dict[Nutriente, RequisitoNutriente],
+    ) -> np.ndarray | None:
+        grupos: dict[str, list[int]] = {}
+        for indice, configuracao in enumerate(configuracoes):
+            grupos.setdefault(configuracao.tipo, []).append(indice)
+        if (
+            len(configuracoes) != 8
+            or len(grupos.get("ENERGETICO", [])) != 4
+            or len(grupos.get("PROTEICO", [])) != 1
+            or len(grupos.get("MINERAL", [])) != 1
+            or len(grupos.get("ADITIVOS", [])) != 2
+            or set(grupos) != {"ENERGETICO", "PROTEICO", "MINERAL", "ADITIVOS"}
+        ):
+            return None
+
+        pb_alvo = cls._alvo_padrao_minimo(requisitos, Nutriente.PB)
+        ndt_alvo = cls._alvo_padrao_minimo(requisitos, Nutriente.NDT)
+        if pb_alvo is None or ndt_alvo is None:
+            return None
+
+        perfil = cls._selecionar_perfil_referencia(
+            perfis=cls.PERFIS_REFERENCIA_SUPLEMENTO_COMPLETO,
+            pb_alvo=pb_alvo,
+            ndt_alvo=ndt_alvo,
+        )
+        if perfil is None:
+            return None
+
+        tipo_por_assinatura = {
+            "MILHO": "ENERGETICO",
+            "AVEIA": "ENERGETICO",
+            "SORGO": "ENERGETICO",
+            "MELACO": "ENERGETICO",
+            "SOJA": "PROTEICO",
+            "CALCARIO": "MINERAL",
+        }
+        indices_por_assinatura: dict[str, int] = {}
+        indices_disponiveis = {
+            tipo: list(indices) for tipo, indices in grupos.items()
+        }
+        for assinatura in cls.ASSINATURAS_PERFIL_COMPLETO:
+            tipo = tipo_por_assinatura[assinatura]
+            correspondentes = [
+                indice
+                for indice in indices_disponiveis[tipo]
+                if cls._composicao_corresponde(matriz_M[indice], assinatura)
+            ]
+            if len(correspondentes) != 1:
+                return None
+            indice = correspondentes[0]
+            indices_por_assinatura[assinatura] = indice
+            indices_disponiveis[tipo].remove(indice)
+
+        # Os dois aditivos não possuem contribuição nos nutrientes atualmente
+        # modelados. Eles são distinguidos pelos limites técnicos cadastrados:
+        # bicarbonato até 1% e cloreto até 0,5%.
+        indices_aditivos = sorted(
+            grupos["ADITIVOS"],
+            key=lambda indice: configuracoes[indice].limite_max,
+            reverse=True,
+        )
+        limites_aditivos = [
+            configuracoes[indice].limite_max for indice in indices_aditivos
+        ]
+        if not np.allclose(limites_aditivos, (0.010, 0.005), atol=1e-9, rtol=0.0):
+            return None
+
+        destino = np.zeros(len(configuracoes), dtype=float)
+        receita = perfil[2]
+        for posicao, assinatura in enumerate(cls.ASSINATURAS_PERFIL_COMPLETO):
+            destino[indices_por_assinatura[assinatura]] = receita[posicao]
+        destino[indices_aditivos[0]] = receita[-2]
+        destino[indices_aditivos[1]] = receita[-1]
+        return destino
+
+    @classmethod
+    def _x_alvo_referencia_suplemento_quatro_ingredientes(
+        cls,
+        configuracoes: list[ConfiguracaoIngrediente],
+        matriz_M: np.ndarray,
+        requisitos: dict[Nutriente, RequisitoNutriente],
+    ) -> np.ndarray | None:
 
         grupos: dict[str, list[int]] = {}
         for indice, configuracao in enumerate(configuracoes):
@@ -874,21 +1468,13 @@ class MotorAdequacao:
         if pb_alvo is None or ndt_alvo is None:
             return None
 
-        candidatos = [
-            perfil
-            for perfil in cls.PERFIS_REFERENCIA_SUPLEMENTO
-            if abs(pb_alvo - perfil[0]) <= cls.TOLERANCIA_PB_PERFIL_REFERENCIA
-            and abs(ndt_alvo - perfil[1]) <= cls.TOLERANCIA_NDT_PERFIL_REFERENCIA
-        ]
-        if not candidatos:
-            return None
-        perfil = min(
-            candidatos,
-            key=lambda item: (
-                abs(pb_alvo - item[0]) / cls.TOLERANCIA_PB_PERFIL_REFERENCIA
-                + abs(ndt_alvo - item[1]) / cls.TOLERANCIA_NDT_PERFIL_REFERENCIA
-            ),
+        perfil = cls._selecionar_perfil_referencia(
+            perfis=cls.PERFIS_REFERENCIA_SUPLEMENTO,
+            pb_alvo=pb_alvo,
+            ndt_alvo=ndt_alvo,
         )
+        if perfil is None:
+            return None
 
         idx_proteico = grupos["PROTEICO"][0]
         idx_mineral = grupos["MINERAL"][0]
@@ -928,6 +1514,29 @@ class MotorAdequacao:
         destino[idx_proteico] = receita[2]
         destino[idx_mineral] = receita[3]
         return destino
+
+    @classmethod
+    def _selecionar_perfil_referencia(
+        cls,
+        perfis: tuple[tuple, ...],
+        pb_alvo: float,
+        ndt_alvo: float,
+    ) -> tuple | None:
+        candidatos = [
+            perfil
+            for perfil in perfis
+            if abs(pb_alvo - perfil[0]) <= cls.TOLERANCIA_PB_PERFIL_REFERENCIA
+            and abs(ndt_alvo - perfil[1]) <= cls.TOLERANCIA_NDT_PERFIL_REFERENCIA
+        ]
+        if not candidatos:
+            return None
+        return min(
+            candidatos,
+            key=lambda item: (
+                abs(pb_alvo - item[0]) / cls.TOLERANCIA_PB_PERFIL_REFERENCIA
+                + abs(ndt_alvo - item[1]) / cls.TOLERANCIA_NDT_PERFIL_REFERENCIA
+            ),
+        )
 
     @classmethod
     def _composicao_corresponde(
@@ -980,6 +1589,9 @@ class MotorAdequacao:
         x = np.zeros(n, dtype=float)
 
         if not idx_vol and matriz_M is not None:
+            # Esta âncora serve só como ponto inicial numérico. Sua influência
+            # no objetivo é deliberadamente pequena; a escolha final vem dos
+            # nutrientes, dos operadores e dos limites de inclusão.
             return cls._x_alvo_suplemento_concentrado(
                 configuracoes=configuracoes,
                 matriz_M=matriz_M,
@@ -1025,8 +1637,38 @@ class MotorAdequacao:
         return max(0.0, min(1.0, valor))
 
     @staticmethod
+    def _normalizar_objetivo(
+        objetivo: ObjetivoGeracao | str,
+    ) -> ObjetivoGeracao:
+        if isinstance(objetivo, ObjetivoGeracao):
+            return objetivo
+        try:
+            return ObjetivoGeracao(str(objetivo).upper())
+        except ValueError as exc:
+            opcoes = ", ".join(item.value for item in ObjetivoGeracao)
+            raise ValueError(f"Objetivo inválido. Use: {opcoes}.") from exc
+
+    @staticmethod
+    def _custos_configuracoes(
+        configuracoes: list[ConfiguracaoIngrediente],
+    ) -> np.ndarray:
+        return np.asarray([
+            config.custo_por_kg_ms or 0.0 for config in configuracoes
+        ], dtype=float)
+
+    @staticmethod
     def _mascara_volumoso(configuracoes: list[ConfiguracaoIngrediente]) -> np.ndarray:
         return np.array([c.classificacao == "VOLUMOSO" for c in configuracoes], dtype=bool)
+
+    @classmethod
+    def _perfil_nutricional(
+        cls,
+        configuracoes: list[ConfiguracaoIngrediente],
+    ) -> PerfilNutricional:
+        """Distingue dieta total de suplemento pela presença de volumoso."""
+        if bool(np.any(cls._mascara_volumoso(configuracoes))):
+            return PerfilNutricional.DIETA_TOTAL
+        return PerfilNutricional.SUPLEMENTO_CONCENTRADO
 
     @classmethod
     def _bounds_geracao(
@@ -1034,6 +1676,7 @@ class MotorAdequacao:
         configuracoes: list[ConfiguracaoIngrediente],
         soma_total: float,
         percentual_volumoso: float | None,
+        aplicar_piso_tecnico: bool = True,
     ) -> list[tuple[float, float]]:
         """Aplica um piso técnico aos ingredientes selecionados quando viável."""
         if not configuracoes:
@@ -1057,6 +1700,9 @@ class MotorAdequacao:
             [config.limite_min, min(config.limite_max, soma_total)]
             for config in configuracoes
         ]
+        if not aplicar_piso_tecnico:
+            return [(float(lo), float(hi)) for lo, hi in bounds]
+
         for e_volumoso, orcamento in orcamentos.items():
             indices = [
                 i for i, marcado in enumerate(mascara_vol)

@@ -15,6 +15,10 @@ from .ingrediente_formulacao import (
 from .snapshot import SnapshotFormulacao, EventoFormulacao, TipoEvento
 from .alerta import Alerta, TipoAlerta, SeveridadeAlerta
 from .parametros_viabilidade import ParametrosViabilidade
+from .referencia_suplemento import (
+    ReferenciaSuplementoValidada,
+    ReferenciaSuplementoIngrediente,
+)
 
 __all__ = [
     "Formulacao",
@@ -32,4 +36,6 @@ __all__ = [
     "TipoAlerta",
     "SeveridadeAlerta",
     "ParametrosViabilidade",
+    "ReferenciaSuplementoValidada",
+    "ReferenciaSuplementoIngrediente",
 ]
