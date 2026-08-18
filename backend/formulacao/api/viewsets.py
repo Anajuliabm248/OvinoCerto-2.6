@@ -37,6 +37,7 @@ from formulacao.api.serializers import (
     AjustarParticipacaoInputSerializer,
     AlertaSerializer,
     AtualizarExigenciaInputSerializer,
+    AtualizarPercentualVolumosoInputSerializer,
     AtualizarParametrosViabilidadeInputSerializer,
     AtualizarPrecoInputSerializer,
     ConfiguracaoNutrienteSerializer,
@@ -67,6 +68,7 @@ from formulacao.services import (
     AdicionarIngredienteService,
     AjustarParticipacaoService,
     AtualizarExigenciaService,
+    AtualizarPercentualVolumosoService,
     AtualizarParametrosViabilidadeService,
     AtualizarPrecoIngredienteService,
     CalcularViabilidadeService,
@@ -93,6 +95,7 @@ _INPUT_SERIALIZER_MAP = {
     "iniciar":               IniciarFormulacaoInputSerializer,
     "gerar":                 GerarFormulacaoInicialInputSerializer,
     "atualizar_exigencia":   AtualizarExigenciaInputSerializer,
+    "atualizar_percentual_volumoso": AtualizarPercentualVolumosoInputSerializer,
     "adicionar_ingrediente": AdicionarIngredienteInputSerializer,
     "ajustar_ingrediente":   AjustarParticipacaoInputSerializer,
     "atualizar_preco_ingrediente": AtualizarPrecoInputSerializer,
@@ -120,6 +123,7 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
     ----------------
     POST   /formulacoes/iniciar/                      etapa 1: lote + NRC + título
     POST   /formulacoes/{id}/gerar/                   etapa 2: ingredientes → distribuição inicial
+    PATCH  /formulacoes/{id}/percentual-volumoso/      atualiza o alvo rígido de volumosos
 
     Exigência configurada
     ---------------------
@@ -308,15 +312,34 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
                 formulacao_id=formulacao.pk,
                 ingrediente_ids=ingrediente_ids,
                 usuario_id=perfil.id if perfil else None,
-                percentual_alvo_volumoso=serializer.validated_data[
+                percentual_alvo_volumoso=serializer.validated_data.get(
                     "percentual_alvo_volumoso"
-                ],
+                ),
                 objetivo=serializer.validated_data["objetivo"],
             )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response(FormulacaoDetailSerializer(formulacao).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["patch"], url_path="percentual-volumoso")
+    def atualizar_percentual_volumoso(self, request, pk=None):
+        """PATCH /formulacoes/{id}/percentual-volumoso/."""
+        self._get_formulacao(request, pk)
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            perfil = self._perfil(request)
+            formulacao = AtualizarPercentualVolumosoService.executar(
+                formulacao_id=int(pk),
+                percentual_alvo_volumoso=serializer.validated_data[
+                    "percentual_alvo_volumoso"
+                ],
+                usuario_id=perfil.id if perfil else None,
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(FormulacaoDetailSerializer(formulacao).data)
 
     # ------------------------------------------------------------------
     # Exigencia configurada
@@ -807,7 +830,8 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
         """
         POST /formulacoes/{id}/versoes/{num}/restaurar/
 
-        Restaura participações do snapshot indicado e gera nova versão.
+        Restaura participações e exigências do snapshot indicado e gera
+        uma nova versão.
         O histórico existente não é alterado.
         """
         self._get_formulacao(request, pk)

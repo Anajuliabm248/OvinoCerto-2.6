@@ -3,6 +3,7 @@
 from .adicionar_ingrediente_service import AdicionarIngredienteService
 from .ajustar_participacao_service import AjustarParticipacaoService
 from .atualizar_exigencia_service import AtualizarExigenciaService
+from .atualizar_percentual_volumoso_service import AtualizarPercentualVolumosoService
 from .gerar_formulacao_inicial_service import GerarFormulacaoInicialService
 from .iniciar_formulacao_service import IniciarFormulacaoService
 from .recalcular_formulacao_service import RecalcularFormulacaoService
@@ -18,6 +19,7 @@ __all__ = [
     'AdicionarIngredienteService',
     'AjustarParticipacaoService',
     'AtualizarExigenciaService',
+    'AtualizarPercentualVolumosoService',
     'GerarFormulacaoInicialService',
     'IniciarFormulacaoService',
     'RecalcularFormulacaoService',

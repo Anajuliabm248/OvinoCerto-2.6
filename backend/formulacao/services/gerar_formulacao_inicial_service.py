@@ -49,11 +49,16 @@ class GerarFormulacaoInicialService:
         formulacao_id: int,
         ingrediente_ids: list[int],
         usuario_id: int | None = None,
-        percentual_alvo_volumoso: float = 0.50,
+        percentual_alvo_volumoso: float | None = None,
         objetivo: str = "EQUILIBRADO",
     ) -> Formulacao:
         """Prepara os vetores, resolve a distribuição e persiste a formulação inicial."""
         formulacao = Formulacao.objects.get(pk=formulacao_id)
+        percentual_alvo_efetivo = (
+            formulacao.percentual_alvo_volumoso
+            if percentual_alvo_volumoso is None
+            else percentual_alvo_volumoso
+        )
 
         if not ExigenciaConfigurada.objects.filter(formulacao_id=formulacao_id).exists():
             raise ValueError(
@@ -115,7 +120,7 @@ class GerarFormulacaoInicialService:
             requisitos=requisitos,
             participacao_atual=participacao,
             configuracoes=configuracoes,
-            percentual_alvo_volumoso=percentual_alvo_volumoso,
+            percentual_alvo_volumoso=percentual_alvo_efetivo,
             reiniciar_livres=True,
             contexto_zootecnico=contexto_zootecnico,
             objetivo=objetivo,
@@ -128,6 +133,10 @@ class GerarFormulacaoInicialService:
                 fracao=float(resultado_dist.fracoes[pos]),
                 origem=participacao.origens[pos],
             )
+
+        if percentual_alvo_volumoso is not None:
+            formulacao.percentual_alvo_volumoso = percentual_alvo_efetivo
+            formulacao.save(update_fields=["percentual_alvo_volumoso"])
 
         motivo = (
             "geracao inicial"
@@ -147,7 +156,7 @@ class GerarFormulacaoInicialService:
                 "n_ingredientes": len(ing_form_qs),
                 "convergiu": resultado_dist.convergiu,
                 "mensagem_solver": resultado_dist.mensagem,
-                "percentual_alvo_vol": percentual_alvo_volumoso,
+                "percentual_alvo_vol": percentual_alvo_efetivo,
                 "objetivo": objetivo,
                 "usou_ingredientes_existentes": usou_ingredientes_existentes,
                 "origem_alvo": resultado_dist.origem_alvo,

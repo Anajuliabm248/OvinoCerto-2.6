@@ -160,11 +160,13 @@ class GerarFormulacaoInicialInputSerializer(serializers.Serializer):
     """Recebe ingredientes e o alvo rígido de volumoso usado na distribuição."""
     percentual_alvo_volumoso = serializers.FloatField(
         required=False,
-        default=0.50,
         min_value=0.0,
         max_value=100.0,
         label="Alvo de volumosos (%)",
-        help_text="Aceita fração (0,50) ou percentual (50). Padrão: 50%.",
+        help_text=(
+            "Aceita fração (0,50) ou percentual (50). Se omitido, preserva "
+            "o alvo já configurado na formulação (50% na primeira geração)."
+        ),
         style={"base_template": "input.html"},
     )
     objetivo = serializers.ChoiceField(
@@ -198,6 +200,22 @@ class GerarFormulacaoInicialInputSerializer(serializers.Serializer):
         O front ja enviou esse campo em formatos diferentes ao longo do
         projeto: 0.20 e 20 devem significar o mesmo alvo de 20%.
         """
+        valor = float(value)
+        return valor / 100.0 if valor > 1.0 else valor
+
+
+class AtualizarPercentualVolumosoInputSerializer(serializers.Serializer):
+    """Valida o novo alvo rígido de volumosos da formulação."""
+
+    percentual_alvo_volumoso = serializers.FloatField(
+        min_value=0.0,
+        max_value=100.0,
+        label="Alvo de volumosos (%)",
+        help_text="Aceita fração (0,50) ou percentual (50).",
+        style={"base_template": "input.html"},
+    )
+
+    def validate_percentual_alvo_volumoso(self, value: float) -> float:
         valor = float(value)
         return valor / 100.0 if valor > 1.0 else valor
 
@@ -385,7 +403,10 @@ class FormulacaoListSerializer(serializers.ModelSerializer):
     class Meta:
         """Mantém a listagem compacta e completamente somente leitura."""
         model  = Formulacao
-        fields = ["id", "lote", "lote_nome", "titulo", "status", "dt_inc", "dt_alt"]
+        fields = [
+            "id", "lote", "lote_nome", "titulo", "status",
+            "percentual_alvo_volumoso", "dt_inc", "dt_alt",
+        ]
         read_only_fields = fields
 
 
@@ -400,7 +421,8 @@ class FormulacaoDetailSerializer(serializers.ModelSerializer):
         model  = Formulacao
         fields = [
             "id", "lote", "lote_nome", "usuario", "titulo", "observacoes",
-            "status", "dt_inc", "dt_alt", "exigencias", "ingredientes",
+            "status", "percentual_alvo_volumoso", "dt_inc", "dt_alt",
+            "exigencias", "ingredientes",
         ]
         read_only_fields = fields
 

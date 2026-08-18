@@ -50,7 +50,12 @@ from django.db import transaction
 from formulacao.domain.participacao import OrigemParticipacao
 from formulacao.engines.motor_adequacao import ConfiguracaoIngrediente, MotorAdequacao
 from formulacao.engines.motor_recalculo import MotorRecalculo
-from formulacao.models import IngredienteFormulacao, OrigemParticipacaoChoices, TipoEvento
+from formulacao.models import (
+    Formulacao,
+    IngredienteFormulacao,
+    OrigemParticipacaoChoices,
+    TipoEvento,
+)
 from formulacao.repositories import (
     EventoRepository,
     ExigenciaRepository,
@@ -348,6 +353,9 @@ class AjustarParticipacaoService:
             requisitos=requisitos,
             participacao_atual=participacao,
             configuracoes=configuracoes,
+            percentual_alvo_volumoso=Formulacao.objects.values_list(
+                "percentual_alvo_volumoso", flat=True
+            ).get(pk=formulacao_id),
         )
 
         ids = participacao.ids_ingredientes

@@ -63,6 +63,14 @@ class Formulacao(models.Model):
         verbose_name="Status",
         db_index=True,
     )
+    percentual_alvo_volumoso = models.FloatField(
+        default=0.50,
+        verbose_name="Alvo de volumosos (fração da MS)",
+        help_text=(
+            "Participação total rígida de ingredientes classificados como "
+            "volumoso, armazenada como fração de 0 a 1."
+        ),
+    )
     dt_inc = models.DateTimeField(auto_now_add=True, verbose_name="Criado em")
     dt_alt = models.DateTimeField(auto_now=True,     verbose_name="Alterado em")
 

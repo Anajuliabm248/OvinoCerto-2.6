@@ -61,6 +61,10 @@ INSTALLED_APPS = [
     'formulacao.apps.FormulacaoConfig',
     # drf-spectacular
     'drf_spectacular',
+    #django_schema_graph
+    'schema_graph',
+    # django_extensions
+    'django_extensions',
 ]
 
 MIDDLEWARE = [

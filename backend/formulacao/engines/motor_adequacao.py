@@ -15,6 +15,9 @@ As regras estruturais são rígidas: soma, ingredientes travados, limites de
 participação e percentual de volumoso. Os requisitos nutricionais entram como
 penalidade de melhor esforço; quando a seleção não permite atendê-los, o motor
 preserva uma distribuição válida e o MotorAlertas informa os desvios.
+
+Em dietas mistas (volumoso + concentrado), o piso padrão de PB é uma exceção:
+ele é aplicado como restrição quando for viável junto às regras estruturais.
 """
 
 from __future__ import annotations
@@ -274,6 +277,7 @@ class MotorAdequacao:
             modo_suplemento_concentrado=(
                 perfil_nutricional == PerfilNutricional.SUPLEMENTO_CONCENTRADO
             ),
+            dieta_mista=cls._tem_volumoso_e_concentrado(configuracoes),
             usar_perfil_referencia=usa_perfil_referencia,
             origem_alvo=origem_alvo,
             confianca_alvo=confianca_alvo,
@@ -383,7 +387,7 @@ class MotorAdequacao:
 
         soma_volumoso_alvo = None
         percentual_volumoso_livre = alvo_vol
-        if reiniciar_livres and percentual_alvo_volumoso is not None:
+        if percentual_alvo_volumoso is not None:
             mascara_volumoso_total = cls._mascara_volumoso(configuracoes)
             volumoso_travado = float(
                 participacao_atual.fracoes[mascara_travados & mascara_volumoso_total].sum()
@@ -486,6 +490,7 @@ class MotorAdequacao:
                 cls._perfil_nutricional(configuracoes)
                 == PerfilNutricional.SUPLEMENTO_CONCENTRADO
             ),
+            dieta_mista=cls._tem_volumoso_e_concentrado(configuracoes),
             usar_perfil_referencia=usar_perfil_referencia,
             origem_alvo=origem_alvo,
             confianca_alvo=confianca_alvo,
@@ -522,6 +527,7 @@ class MotorAdequacao:
         mascara_volumoso_sub: np.ndarray | None = None,
         soma_volumoso_alvo: float | None = None,
         modo_suplemento_concentrado: bool = False,
+        dieta_mista: bool = False,
         usar_perfil_referencia: bool = False,
         origem_alvo: str = "heuristica",
         confianca_alvo: float | None = None,
@@ -614,12 +620,24 @@ class MotorAdequacao:
                     "jac": lambda x, c=coef_vol: c,
                 })
 
+        exigir_pb_padrao = cls._pb_padrao_rigido_em_dieta_mista(
+            matriz_M_sub=matriz_M_sub,
+            requisitos=requisitos,
+            bounds_sub=bounds_sub,
+            soma_alvo=soma_alvo,
+            contrib_fixas=contrib_fixas,
+            mascara_volumoso_sub=mascara_volumoso_sub,
+            soma_volumoso_alvo=alvo_volumoso_validado,
+            dieta_mista=dieta_mista,
+        )
+
         constraints.extend(restricoes_suplemento)
         constraints.extend(
             cls._restricoes_nutricionais_explicitas(
                 matriz_M_sub=matriz_M_sub,
                 requisitos=requisitos,
                 contrib_fixas=contrib_fixas,
+                incluir_pb_padrao=exigir_pb_padrao,
             )
         )
 
@@ -650,6 +668,7 @@ class MotorAdequacao:
                 matriz_M_sub=matriz_M_sub,
                 requisitos=requisitos,
                 contrib_fixas=contrib_fixas,
+                incluir_pb_padrao=exigir_pb_padrao,
             )
         ):
             return ResultadoDistribuicao(
@@ -684,8 +703,13 @@ class MotorAdequacao:
                 convergiu=True,
                 mensagem=(
                     f"Distribuição estrutural válida gerada em {resultado.nit} "
-                    "iterações; requisitos alterados explicitamente foram "
-                    "aplicados como restrições. "
+                    "iterações; requisitos alterados explicitamente"
+                    + (
+                        " e o piso padrão de PB da dieta mista"
+                        if exigir_pb_padrao
+                        else ""
+                    )
+                    + " foram aplicados como restrições. "
                     f"Alvo inicial: {origem_alvo}."
                 ),
                 origem_alvo=origem_alvo,
@@ -753,11 +777,18 @@ class MotorAdequacao:
         matriz_M_sub: np.ndarray,
         requisitos: dict[Nutriente, RequisitoNutriente],
         contrib_fixas: np.ndarray,
+        incluir_pb_padrao: bool = False,
     ) -> bool:
-        """Valida apenas as escolhas nutricionais explícitas do usuário."""
+        """Valida escolhas explícitas e, quando aplicável, o piso padrão de PB."""
         totais = x @ matriz_M_sub + contrib_fixas
         for nutriente, requisito in requisitos.items():
-            if not requisito.alterado_pelo_usuario:
+            pb_padrao_rigido = (
+                incluir_pb_padrao
+                and nutriente == Nutriente.PB
+                and MotorAdequacao._alvo_padrao_minimo(requisitos, Nutriente.PB)
+                is not None
+            )
+            if not requisito.alterado_pelo_usuario and not pb_padrao_rigido:
                 continue
             if nutriente == Nutriente.CA_P:
                 ca = totais[indice_de(Nutriente.CA)]
@@ -793,16 +824,23 @@ class MotorAdequacao:
         matriz_M_sub: np.ndarray,
         requisitos: dict[Nutriente, RequisitoNutriente],
         contrib_fixas: np.ndarray,
+        incluir_pb_padrao: bool = False,
     ) -> list[dict]:
         """Transforma operadores escolhidos pelo usuário em restrições reais.
 
         O NRC padrão continua sendo melhor esforço: uma seleção de ingredientes
         pode não conseguir atendê-lo. Ao editar um requisito, porém, o usuário
         espera semântica efetiva para ``=``, ``>=``, ``<=`` e ``ENTRE``.
+        Em dieta mista viável, o piso padrão de PB também é rígido.
         """
         restricoes: list[dict] = []
         for nutriente, requisito in requisitos.items():
-            if not requisito.alterado_pelo_usuario:
+            pb_padrao_rigido = (
+                incluir_pb_padrao
+                and nutriente == Nutriente.PB
+                and cls._alvo_padrao_minimo(requisitos, Nutriente.PB) is not None
+            )
+            if not requisito.alterado_pelo_usuario and not pb_padrao_rigido:
                 continue
 
             limite_min, limite_max = requisito.limites_lp()
@@ -974,7 +1012,10 @@ class MotorAdequacao:
         soma_alvo: float,
         contrib_fixas: np.ndarray,
         pb_alvo: float | None = None,
+        pb_minimo: float | None = None,
         ndt_minimo: float | None = None,
+        mascara_subgrupo: np.ndarray | None = None,
+        soma_subgrupo_alvo: float | None = None,
     ) -> bool:
         n = matriz_M_sub.shape[0]
         a_eq = [np.ones(n, dtype=float)]
@@ -985,20 +1026,30 @@ class MotorAdequacao:
             a_eq.append(matriz_M_sub[:, idx_pb])
             b_eq.append(pb_alvo - contrib_fixas[idx_pb])
 
-        a_ub = None
-        b_ub = None
+        if mascara_subgrupo is not None and soma_subgrupo_alvo is not None:
+            mascara = np.asarray(mascara_subgrupo, dtype=bool)
+            if mascara.shape != (n,):
+                return False
+            if np.any(mascara) and not np.all(mascara):
+                a_eq.append(mascara.astype(float))
+                b_eq.append(soma_subgrupo_alvo)
+
+        a_ub: list[np.ndarray] = []
+        b_ub: list[float] = []
+        if pb_minimo is not None:
+            idx_pb = indice_de(Nutriente.PB)
+            a_ub.append(-matriz_M_sub[:, idx_pb])
+            b_ub.append(-(pb_minimo - contrib_fixas[idx_pb]))
         if ndt_minimo is not None:
             idx_ndt = indice_de(Nutriente.NDT)
-            a_ub = np.array([-matriz_M_sub[:, idx_ndt]], dtype=float)
-            b_ub = np.array([
-                -(ndt_minimo - contrib_fixas[idx_ndt])
-            ], dtype=float)
+            a_ub.append(-matriz_M_sub[:, idx_ndt])
+            b_ub.append(-(ndt_minimo - contrib_fixas[idx_ndt]))
 
         try:
             resultado = linprog(
                 c=np.zeros(n, dtype=float),
-                A_ub=a_ub,
-                b_ub=b_ub,
+                A_ub=np.asarray(a_ub, dtype=float) if a_ub else None,
+                b_ub=np.asarray(b_ub, dtype=float) if b_ub else None,
                 A_eq=np.asarray(a_eq, dtype=float),
                 b_eq=np.asarray(b_eq, dtype=float),
                 bounds=bounds_sub,
@@ -1007,6 +1058,33 @@ class MotorAdequacao:
         except ValueError:
             return False
         return bool(resultado.success)
+
+    @classmethod
+    def _pb_padrao_rigido_em_dieta_mista(
+        cls,
+        matriz_M_sub: np.ndarray,
+        requisitos: dict[Nutriente, RequisitoNutriente],
+        bounds_sub: list[tuple[float, float]],
+        soma_alvo: float,
+        contrib_fixas: np.ndarray,
+        mascara_volumoso_sub: np.ndarray | None,
+        soma_volumoso_alvo: float | None,
+        dieta_mista: bool,
+    ) -> bool:
+        """Ativa PB padrão só para dieta com ambos os grupos e solução viável."""
+        if not dieta_mista:
+            return False
+
+        pb_alvo = cls._alvo_padrao_minimo(requisitos, Nutriente.PB)
+        return pb_alvo is not None and cls._perfil_linear_viavel(
+            matriz_M_sub=matriz_M_sub,
+            bounds_sub=bounds_sub,
+            soma_alvo=soma_alvo,
+            contrib_fixas=contrib_fixas,
+            pb_minimo=pb_alvo,
+            mascara_subgrupo=mascara_volumoso_sub,
+            soma_subgrupo_alvo=soma_volumoso_alvo,
+        )
 
     @classmethod
     def _penalidade_suplemento_concentrado(
@@ -1669,6 +1747,14 @@ class MotorAdequacao:
         if bool(np.any(cls._mascara_volumoso(configuracoes))):
             return PerfilNutricional.DIETA_TOTAL
         return PerfilNutricional.SUPLEMENTO_CONCENTRADO
+
+    @classmethod
+    def _tem_volumoso_e_concentrado(
+        cls,
+        configuracoes: list[ConfiguracaoIngrediente],
+    ) -> bool:
+        mascara_volumoso = cls._mascara_volumoso(configuracoes)
+        return bool(np.any(mascara_volumoso) and np.any(~mascara_volumoso))
 
     @classmethod
     def _bounds_geracao(

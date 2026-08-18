@@ -30,7 +30,7 @@ from django.db import transaction
 
 from formulacao.engines.motor_adequacao import MotorAdequacao
 from formulacao.engines.motor_recalculo import MotorRecalculo
-from formulacao.models import IngredienteFormulacao, TipoEvento
+from formulacao.models import Formulacao, IngredienteFormulacao, TipoEvento
 from formulacao.repositories import (
     EventoRepository,
     ExigenciaRepository,
@@ -116,6 +116,9 @@ class RemoverIngredienteService:
             requisitos=requisitos,
             participacao_atual=participacao,
             configuracoes=configuracoes,
+            percentual_alvo_volumoso=Formulacao.objects.values_list(
+                "percentual_alvo_volumoso", flat=True
+            ).get(pk=formulacao_id),
         )
 
         ids = participacao.ids_ingredientes

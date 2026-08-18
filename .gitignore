@@ -25,5 +25,3 @@ __pycache__/
 .env
 frontend/.env.local
 frontend/dist/
-
-
