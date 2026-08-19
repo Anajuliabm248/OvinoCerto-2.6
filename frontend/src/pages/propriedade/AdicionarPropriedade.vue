@@ -1,100 +1,53 @@
 <template>
-  <div class="add-property-page">
-    <Header />
+  <PageCard title="Cadastro de Propriedade" size="form">
+    <template #top-bar-extra>
+      <Botao label="Voltar" to="/propriedades" variant="ghost" />
+    </template>
 
-    <main class="content">
-      <div class="add-property-card">
-
-        <div class="top-bar">
-          <h3>Cadastro de Propriedade</h3>
-        </div>
-
-        <form class="property-form" @submit.prevent="handleSubmit">
-          <div class="form-row">
-            <input
-              v-model="form.identificacao"
-              type="text"
-              placeholder="Identificação"
-              class="form-input"
-            />
-            <input
-              v-model="form.cnpj"
-              type="text"
-              placeholder="CNPJ"
-              class="form-input"
-            />
-            <input
-              v-model="form.proprietario"
-              type="text"
-              placeholder="Proprietário"
-              class="form-input"
-            />
-          </div>
-
-          <div class="form-row">
-            <input
-              v-model="form.telefone"
-              type="text"
-              placeholder="Telefone"
-              class="form-input"
-            />
-            <select
-              v-model="form.estado"
-              class="form-input"
-            >
-              <option value="" disabled selected>Estado</option>
-              <option
-                v-for="uf in estados"
-                :key="uf.sigla"
-                :value="uf.sigla"
-              >
-                {{ uf.sigla }} - {{ uf.nome }}
-              </option>
-            </select>
-            <input
-              v-model="form.cidade"
-              type="text"
-              placeholder="Cidade"
-              class="form-input"
-            />
-            <input
-              v-model="form.localidade"
-              type="text"
-              placeholder="Localidade"
-              class="form-input"
-            />
-          </div>
-
-          <p class="preview-label">
-            Exemplo de visualização na relação de propriedades:
-          </p>
-
-          <div class="preview-row">
-            <span>{{ form.identificacao || 'TESTE' }}</span>
-            <span>{{ form.cnpj || '00.000.000/000-00' }}</span>
-            <span>{{ form.proprietario || 'TESTE' }}</span>
-            <span>{{ form.telefone || '(12) 34567-8909' }}</span>
-            <span>{{ form.estado || 'AC - Acre' }}</span>
-            <span>{{ form.cidade || 'Acrelândia' }}</span>
-            <span>{{ form.localidade || 'D' }}</span>
-            <span class="preview-options">X E</span>
-          </div>
-
-          <div class="form-actions">
-            <button type="submit" class="btn-action">
-              Cadastrar
-            </button>
-          </div>
-        </form>
-
+    <form class="property-form" @submit.prevent="handleSubmit">
+      <div class="form-row">
+        <CampoTexto v-model="form.identificacao" placeholder="Identificação" />
+        <CampoTexto v-model="form.cnpj" placeholder="CNPJ" />
+        <CampoTexto v-model="form.proprietario" placeholder="Proprietário" />
       </div>
-    </main>
-  </div>
+
+      <div class="form-row second-row">
+        <CampoTexto v-model="form.telefone" placeholder="Telefone" />
+        <select v-model="form.estado" class="form-input">
+          <option value="" disabled>Estado</option>
+          <option v-for="uf in estados" :key="uf.sigla" :value="uf.sigla">
+            {{ uf.sigla }} - {{ uf.nome }}
+          </option>
+        </select>
+        <CampoTexto v-model="form.cidade" placeholder="Cidade" />
+        <CampoTexto v-model="form.localidade" placeholder="Localidade" />
+      </div>
+
+      <p class="preview-label">Exemplo de visualização na relação de propriedades:</p>
+
+      <div class="preview-row">
+        <span>{{ form.identificacao || 'TESTE' }}</span>
+        <span>{{ form.cnpj || '00.000.000/000-00' }}</span>
+        <span>{{ form.proprietario || 'TESTE' }}</span>
+        <span>{{ form.telefone || '(12) 34567-8909' }}</span>
+        <span>{{ form.estado || 'AC - Acre' }}</span>
+        <span>{{ form.cidade || 'Acrelândia' }}</span>
+        <span>{{ form.localidade || 'D' }}</span>
+        <span class="preview-options">X E</span>
+      </div>
+
+      <div class="form-actions">
+        <Botao label="Cadastrar" type="submit" />
+      </div>
+    </form>
+  </PageCard>
 </template>
 
 <script setup>
 import { reactive } from 'vue'
-import Header from '@/components/Header.vue'
+import PageCard from '@/components/ui/PageCard.vue'
+import CampoTexto from '@/components/ui/CampoTexto.vue'
+import Botao from '@/components/ui/Botao.vue'
 
 const estados = [
   { sigla: 'AC', nome: 'Acre' },
@@ -143,73 +96,33 @@ function handleSubmit() {
 </script>
 
 <style scoped>
-.add-property-page {
-  min-height: 100vh;
-  background: var(--background);
-}
-
-.content {
-  display: flex;
-  justify-content: center;
-
-  padding:
-    var(--space-xl)
-    var(--space-lg);
-}
-
-.add-property-card {
-  width: 100%;
-  max-width: 1100px;
-
-  background: var(--card-bg);
-
-  border-radius: 24px;
-
-  padding: var(--space-lg);
-
-  box-shadow: var(--shadow-md);
-}
-
-.top-bar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-
-  margin-bottom: var(--space-md);
-}
-
-.top-bar h3 {
-  margin: 0;
-  color: var(--white);
-  font-weight: 500;
-}
-
 .property-form {
-  display: flex;
-  flex-direction: column;
-
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
   gap: var(--space-sm);
+  min-height: 0;
+  height: 100%;
 }
 
 .form-row {
-  display: flex;
-
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-sm);
 }
 
+.second-row {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .form-input {
-  flex: 1;
-
+  width: 100%;
   background: var(--white);
-
   border: none;
   border-radius: 999px;
-
-  padding: 10px 20px;
-
+  padding: 10px 16px;
   color: var(--text);
-
   font-size: 14px;
+  box-sizing: border-box;
 }
 
 select.form-input {
@@ -219,7 +132,6 @@ select.form-input {
 
 .preview-label {
   margin: var(--space-md) 0 0;
-
   color: var(--white);
   font-size: 13px;
 }
@@ -228,17 +140,13 @@ select.form-input {
   display: flex;
   align-items: center;
   justify-content: space-between;
-
   gap: var(--space-sm);
-
   background: var(--white);
-
   border-radius: 999px;
-
   padding: 12px 24px;
-
   color: #666;
   font-size: 14px;
+  flex-wrap: wrap;
 }
 
 .preview-options {
@@ -249,67 +157,31 @@ select.form-input {
 .form-actions {
   display: flex;
   justify-content: flex-end;
-
   margin-top: var(--space-md);
 }
 
-.btn-action {
-  border: none;
-
-  background: var(--primary-dark);
-
-  color: var(--white);
-
-  padding: 10px 28px;
-
-  border-radius: 999px;
-
-  cursor: pointer;
-
-  transition: .2s ease;
-}
-
-.btn-action:hover {
-  filter: brightness(1.1);
-}
-
 @media (max-width: 1024px) {
-  .form-row {
-    flex-wrap: wrap;
-  }
-
-  .form-input {
-    flex: 1 1 45%;
+  .form-row,
+  .second-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .preview-row {
-    flex-wrap: wrap;
     border-radius: var(--radius-lg);
   }
 }
 
 @media (max-width: 768px) {
-  .content {
-    padding: var(--space-md);
-  }
-
-  .add-property-card {
-    padding: var(--space-md);
-  }
-
-  .form-row {
-    flex-direction: column;
-  }
-
-  .form-input {
-    flex: 1 1 100%;
+  .form-row,
+  .second-row {
+    grid-template-columns: 1fr;
   }
 
   .form-actions {
     justify-content: stretch;
   }
 
-  .btn-action {
+  .form-actions .botao {
     width: 100%;
   }
 }

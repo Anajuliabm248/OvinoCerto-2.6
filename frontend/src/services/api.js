@@ -59,6 +59,12 @@ export const lotesAPI = {
   deletar: (id) => api.delete(`/lotes/${id}/`),
 }
 
+// === EXIGÊNCIAS NRC ===
+export const exigenciasAPI = {
+  listar: (params = {}) => api.get('/exigencias/', { params }),
+  obter: (id) => api.get(`/exigencias/${id}/`),
+}
+
 // === AUTENTICAÇÃO ===
 export const autenticacaoAPI = {
   login: (username, password) => 

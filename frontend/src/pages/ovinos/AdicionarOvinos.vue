@@ -1,105 +1,59 @@
 <template>
-  <div class="add-lot-page">
-    <Header />
+  <PageCard title="Cadastro de Ovinos/Lote" size="form">
+    <template #top-bar-extra>
+      <Botao
+        label="Voltar"
+        to="/propriedades/ovinos"
+        variant="ghost"
+      />
+    </template>
 
-    <main class="content">
-      <div class="add-lot-card">
-        <div class="top-bar">
-          <h3>Cadastro de Ovinos/Lote</h3>
-        </div>
+    <form class="lote-form" @submit.prevent="handleSubmit">
 
-        <form class="lot-form" @submit.prevent="handleSubmit">
-          <div class="form-row">
-            <input
-              v-model="form.nomeLote"
-              type="text"
-              placeholder="Nome do lote"
-              class="form-input"
-            />
-            <input
-              v-model="form.raca"
-              type="text"
-              placeholder="Raça"
-              class="form-input"
-            />
-            <select v-model="form.sistema" class="form-input">
-              <option value="" disabled selected>Sistema</option>
-              <option value="pastagem">Pastagem</option>
-              <option value="confinamento">Confinamento</option>
-              <option value="semi-confinamento">Semi-confinamento</option>
-            </select>
-            <select v-model="form.fase" class="form-input">
-              <option value="" disabled selected>Fase</option>
-              <option value="crescimento">Crescimento</option>
-              <option value="terminacao">Terminação</option>
-              <option value="reproducao">Reprodução</option>
-            </select>
-          </div>
-
-          <div class="form-row second-row">
-            <input
-              v-model="form.pv"
-              type="text"
-              placeholder="PV"
-              class="form-input"
-            />
-            <input
-              v-model="form.gmdEsperado"
-              type="text"
-              placeholder="GMD esperado"
-              class="form-input"
-            />
-            <input
-              v-model="form.unidades"
-              type="number"
-              min="1"
-              placeholder="Unidades"
-              class="form-input"
-            />
-            <input
-              v-model="form.idade"
-              type="number"
-              min="0"
-              placeholder="Idade"
-              class="form-input"
-            />
-            <select v-model="form.tipoParto" class="form-input">
-              <option value="" disabled selected>Tipo de parto</option>
-              <option value="simples">Simples</option>
-              <option value="duplo">Duplo</option>
-              <option value="triplo">Triplo</option>
-            </select>
-          </div>
-
-          <div class="preview-box">
-            <p class="preview-label">Resumo do lote</p>
-            <div class="preview-row">
-              <span>{{ form.nomeLote || 'Nome do lote' }}</span>
-              <span>{{ form.raca || 'Raça' }}</span>
-              <span>{{ form.sistema || 'Sistema' }}</span>
-              <span>{{ form.fase || 'Fase' }}</span>
-              <span>{{ form.pv || 'PV' }}</span>
-              <span>{{ form.gmdEsperado || 'GMD esperado' }}</span>
-              <span>{{ form.unidades || 'Unidades' }}</span>
-              <span>{{ form.idade || 'Idade' }}</span>
-              <span>{{ form.tipoParto || 'Tipo de parto' }}</span>
-            </div>
-          </div>
-
-          <div class="form-actions">
-            <button type="submit" class="btn-action">
-              Cadastrar
-            </button>
-          </div>
-        </form>
+      <div class="form-row">
+        <CampoTexto v-model="form.nomeLote" placeholder="Nome do lote" />
+        <CampoTexto v-model="form.raca" placeholder="Raça" />
+        <Seletor v-model="form.sistema" placeholder="Sistema" :options="opcoesSistema" />
+        <Seletor v-model="form.fase" placeholder="Fase" :options="opcoesFase" />
       </div>
-    </main>
-  </div>
+
+      <div class="form-row second-row">
+        <CampoTexto v-model="form.pv" placeholder="PV" />
+        <CampoTexto v-model="form.gmdEsperado" placeholder="GMD esperado" />
+        <CampoTexto v-model="form.unidades" type="number" min="1" placeholder="Unidades" />
+        <CampoTexto v-model="form.idade" type="number" min="0" placeholder="Idade" />
+        <Seletor v-model="form.tipoParto" placeholder="Tipo de parto" :options="opcoesTipoParto" />
+      </div>
+
+      <div class="preview-box">
+        <p class="preview-label">Resumo do lote</p>
+        <div class="preview-row">
+          <span>{{ form.nomeLote || 'Nome do lote' }}</span>
+          <span>{{ form.raca || 'Raça' }}</span>
+          <span>{{ form.sistema || 'Sistema' }}</span>
+          <span>{{ form.fase || 'Fase' }}</span>
+          <span>{{ form.pv || 'PV' }}</span>
+          <span>{{ form.gmdEsperado || 'GMD esperado' }}</span>
+          <span>{{ form.unidades || 'Unidades' }}</span>
+          <span>{{ form.idade || 'Idade' }}</span>
+          <span>{{ form.tipoParto || 'Tipo de parto' }}</span>
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <Botao label="Cadastrar" type="submit" />
+      </div>
+
+    </form>
+  </PageCard>
 </template>
 
 <script setup>
 import { reactive } from 'vue'
-import Header from '@/components/Header.vue'
+import PageCard from '@/components/ui/PageCard.vue'
+import CampoTexto from '@/components/ui/CampoTexto.vue'
+import Seletor from '@/components/ui/Seletor.vue'
+import Botao from '@/components/ui/Botao.vue'
 
 const form = reactive({
   nomeLote: '',
@@ -113,51 +67,39 @@ const form = reactive({
   tipoParto: '',
 })
 
+const opcoesSistema = [
+  { value: 'pastagem', label: 'Pastagem' },
+  { value: 'confinamento', label: 'Confinamento' },
+  { value: 'semi-confinamento', label: 'Semi-confinamento' },
+]
+
+const opcoesFase = [
+  { value: 'crescimento', label: 'Crescimento' },
+  { value: 'terminacao', label: 'Terminação' },
+  { value: 'reproducao', label: 'Reprodução' },
+]
+
+const opcoesTipoParto = [
+  { value: 'simples', label: 'Simples' },
+  { value: 'duplo', label: 'Duplo' },
+  { value: 'triplo', label: 'Triplo' },
+]
+
 function handleSubmit() {
   console.log('Cadastrar lote:', { ...form })
 }
 </script>
 
 <style scoped>
-.add-lot-page {
-  min-height: 100vh;
-  background: var(--background);
-}
-
-.content {
-  display: flex;
-  justify-content: center;
-  padding: var(--space-xl) var(--space-lg);
-}
-
-.add-lot-card {
-  width: 100%;
-  max-width: 1200px;
-  background: var(--card-bg);
-  border-radius: 24px;
-  padding: var(--space-lg);
-  box-shadow: var(--shadow-md);
-}
-
-.top-bar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: var(--space-md);
-}
-
-.top-bar h3 {
-  margin: 0;
-  color: var(--white);
-  font-weight: 500;
-}
-
-.lot-form {
-  display: flex;
-  flex-direction: column;
+.lote-form {
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
   gap: var(--space-sm);
+  min-height: 0;
+  height: 100%;
 }
 
+/* Layout de grade específico desta página (nº de colunas por linha) */
 .form-row {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -166,22 +108,6 @@ function handleSubmit() {
 
 .second-row {
   grid-template-columns: repeat(5, minmax(0, 1fr));
-}
-
-.form-input {
-  width: 100%;
-  background: var(--white);
-  border: none;
-  border-radius: 999px;
-  padding: 10px 16px;
-  color: var(--text);
-  font-size: 14px;
-  box-sizing: border-box;
-}
-
-select.form-input {
-  appearance: none;
-  cursor: pointer;
 }
 
 .preview-box {
@@ -213,25 +139,8 @@ select.form-input {
   margin-top: var(--space-md);
 }
 
-.btn-action {
-  border: none;
-  background: var(--primary-dark);
-  color: var(--white);
-  padding: 10px 28px;
-  border-radius: 999px;
-  cursor: pointer;
-  transition: .2s ease;
-}
-
-.btn-action:hover {
-  filter: brightness(1.1);
-}
-
 @media (max-width: 1024px) {
-  .form-row {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
+  .form-row,
   .second-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -242,14 +151,6 @@ select.form-input {
 }
 
 @media (max-width: 768px) {
-  .content {
-    padding: var(--space-md);
-  }
-
-  .add-lot-card {
-    padding: var(--space-md);
-  }
-
   .form-row,
   .second-row {
     grid-template-columns: 1fr;
@@ -259,7 +160,7 @@ select.form-input {
     justify-content: stretch;
   }
 
-  .btn-action {
+  .form-actions .botao {
     width: 100%;
   }
 }

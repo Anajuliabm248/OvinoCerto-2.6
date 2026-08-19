@@ -42,6 +42,42 @@ const routes = [
     meta: { requiresAuth: false },
   },
   {
+    path: '/formulacoes/dashboard/dados',
+    name: 'FormulacaoDashboardDados',
+    component: () => import('../pages/formulacao/FormulacaoDashboardDados.vue'),
+    meta: { requiresAuth: false },
+  },
+  {
+    path: '/formulacoes/ajustes-dieta',
+    name: 'FormulacaoAjustesDieta',
+    component: () => import('../pages/formulacao/FormulacaoAjustesDieta.vue'),
+    meta: { requiresAuth: false },
+  },
+  {
+    path: '/formulacoes/custos',
+    name: 'FormulacaoCustos',
+    component: () => import('../pages/formulacao/FormulacaoCustos.vue'),
+    meta: { requiresAuth: false },
+  },
+  {
+    path: '/formulacoes/ajustes-alimentacao',
+    name: 'FormulacaoAjustesAlimentacao',
+    component: () => import('../pages/formulacao/FormulacaoAjustesAlimentacao.vue'),
+    meta: { requiresAuth: false },
+  },
+  {
+    path: '/formulacoes/observacoes',
+    name: 'FormulacaoObservacoes',
+    component: () => import('../pages/formulacao/FormulacaoObservacoes.vue'),
+    meta: { requiresAuth: false },
+  },
+  {
+    path: '/formulacoes/relatorio',
+    name: 'FormulacaoRelatorio',
+    component: () => import('../pages/formulacao/FormulacaoRelatorio.vue'),
+    meta: { requiresAuth: false },
+  },
+  {
     path: '/formulacoes/exigencias',
     name: 'FormulacaoExigencias',
     component: () => import('../pages/formulacao/FormulacaoExigencias.vue'),

@@ -1,119 +1,59 @@
 <template>
-  <div class="add-ingredient-page">
-    <Header />
+  <PageCard title="Cadastro de Ingrediente" size="form">
+    <template #top-bar-extra>
+      <Botao label="Voltar" to="/ingredientes" variant="ghost" />
+    </template>
 
-    <main class="content">
-      <div class="add-ingredient-card">
-        <div class="top-bar">
-          <h3>Cadastro de Ingrediente</h3>
-        </div>
+    <form class="ingredient-form" @submit.prevent="handleSubmit">
 
-        <form class="ingredient-form" @submit.prevent="handleSubmit">
-          <div class="form-row">
-            <select v-model="form.classificacao" class="form-input">
-              <option value="" disabled selected>Classificação</option>
-              <option value="volumoso">Volumoso</option>
-              <option value="concentrado">Concentrado</option>
-              <option value="suplemento">Suplemento</option>
-            </select>
-
-            <input
-              v-model="form.tipo"
-              type="text"
-              placeholder="Tipo"
-              class="form-input"
-            />
-
-            <input
-              v-model="form.nome"
-              type="text"
-              placeholder="Nome de ingrediente"
-              class="form-input"
-            />
-          </div>
-
-          <div class="form-row second-row">
-            <input
-              v-model="form.ms"
-              type="text"
-              placeholder="MS (%)"
-              class="form-input"
-            />
-            <input
-              v-model="form.pb"
-              type="text"
-              placeholder="PB (%)"
-              class="form-input"
-            />
-            <input
-              v-model="form.ndt"
-              type="text"
-              placeholder="NDT (%)"
-              class="form-input"
-            />
-            <input
-              v-model="form.fdn"
-              type="text"
-              placeholder="FDN (%)"
-              class="form-input"
-            />
-            <input
-              v-model="form.ee"
-              type="text"
-              placeholder="EE (%)"
-              class="form-input"
-            />
-            <input
-              v-model="form.ca"
-              type="text"
-              placeholder="CA (%)"
-              class="form-input"
-            />
-            <input
-              v-model="form.p"
-              type="text"
-              placeholder="P (%)"
-              class="form-input"
-            />
-            <input
-              v-model="form.custo"
-              type="text"
-              placeholder="Custo (R$)"
-              class="form-input"
-            />
-          </div>
-
-          <div class="preview-box">
-            <p class="preview-label">Resumo do ingrediente</p>
-            <div class="preview-row">
-              <span>{{ form.classificacao || 'Classificação' }}</span>
-              <span>{{ form.tipo || 'Tipo' }}</span>
-              <span>{{ form.nome || 'Nome de ingrediente' }}</span>
-              <span>{{ form.ms || 'MS (%)' }}</span>
-              <span>{{ form.pb || 'PB (%)' }}</span>
-              <span>{{ form.ndt || 'NDT (%)' }}</span>
-              <span>{{ form.fdn || 'FDN (%)' }}</span>
-              <span>{{ form.ee || 'EE (%)' }}</span>
-              <span>{{ form.ca || 'CA (%)' }}</span>
-              <span>{{ form.p || 'P (%)' }}</span>
-              <span>{{ form.custo || 'Custo (R$)' }}</span>
-            </div>
-          </div>
-
-          <div class="form-actions">
-            <button type="submit" class="btn-action">
-              Cadastrar
-            </button>
-          </div>
-        </form>
+      <div class="form-row">
+        <Seletor v-model="form.classificacao" placeholder="Classificação" :options="opcoesClassificacao" />
+        <CampoTexto v-model="form.tipo" placeholder="Tipo" />
+        <CampoTexto v-model="form.nome" placeholder="Nome de ingrediente" />
       </div>
-    </main>
-  </div>
+
+      <div class="form-row second-row">
+        <CampoTexto v-model="form.ms" placeholder="MS (%)" />
+        <CampoTexto v-model="form.pb" placeholder="PB (%)" />
+        <CampoTexto v-model="form.ndt" placeholder="NDT (%)" />
+        <CampoTexto v-model="form.fdn" placeholder="FDN (%)" />
+        <CampoTexto v-model="form.ee" placeholder="EE (%)" />
+        <CampoTexto v-model="form.ca" placeholder="CA (%)" />
+        <CampoTexto v-model="form.p" placeholder="P (%)" />
+        <CampoTexto v-model="form.custo" placeholder="Custo (R$)" />
+      </div>
+
+      <div class="preview-box">
+        <p class="preview-label">Resumo do ingrediente</p>
+        <div class="preview-row">
+          <span>{{ form.classificacao || 'Classificação' }}</span>
+          <span>{{ form.tipo || 'Tipo' }}</span>
+          <span>{{ form.nome || 'Nome de ingrediente' }}</span>
+          <span>{{ form.ms || 'MS (%)' }}</span>
+          <span>{{ form.pb || 'PB (%)' }}</span>
+          <span>{{ form.ndt || 'NDT (%)' }}</span>
+          <span>{{ form.fdn || 'FDN (%)' }}</span>
+          <span>{{ form.ee || 'EE (%)' }}</span>
+          <span>{{ form.ca || 'CA (%)' }}</span>
+          <span>{{ form.p || 'P (%)' }}</span>
+          <span>{{ form.custo || 'Custo (R$)' }}</span>
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <Botao label="Cadastrar" type="submit" />
+      </div>
+
+    </form>
+  </PageCard>
 </template>
 
 <script setup>
 import { reactive } from 'vue'
-import Header from '@/components/Header.vue'
+import PageCard from '@/components/ui/PageCard.vue'
+import CampoTexto from '@/components/ui/CampoTexto.vue'
+import Seletor from '@/components/ui/Seletor.vue'
+import Botao from '@/components/ui/Botao.vue'
 
 const form = reactive({
   classificacao: '',
@@ -129,51 +69,27 @@ const form = reactive({
   custo: '',
 })
 
+const opcoesClassificacao = [
+  { value: 'volumoso', label: 'Volumoso' },
+  { value: 'concentrado', label: 'Concentrado' },
+  { value: 'suplemento', label: 'Suplemento' },
+]
+
 function handleSubmit() {
   console.log('Cadastrar ingrediente:', { ...form })
 }
 </script>
 
 <style scoped>
-.add-ingredient-page {
-  min-height: 100vh;
-  background: var(--background);
-}
-
-.content {
-  display: flex;
-  justify-content: center;
-  padding: var(--space-xl) var(--space-lg);
-}
-
-.add-ingredient-card {
-  width: 100%;
-  max-width: 1400px;
-  background: var(--card-bg);
-  border-radius: 24px;
-  padding: var(--space-lg);
-  box-shadow: var(--shadow-md);
-}
-
-.top-bar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: var(--space-md);
-}
-
-.top-bar h3 {
-  margin: 0;
-  color: var(--white);
-  font-weight: 500;
-}
-
 .ingredient-form {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
   gap: var(--space-sm);
+  min-height: 0;
+  height: 100%;
 }
 
+/* Layout de grade específico desta página (nº de colunas por linha) */
 .form-row {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -182,22 +98,6 @@ function handleSubmit() {
 
 .second-row {
   grid-template-columns: repeat(8, minmax(0, 1fr));
-}
-
-.form-input {
-  width: 100%;
-  background: var(--white);
-  border: none;
-  border-radius: 999px;
-  padding: 10px 16px;
-  color: var(--text);
-  font-size: 14px;
-  box-sizing: border-box;
-}
-
-select.form-input {
-  appearance: none;
-  cursor: pointer;
 }
 
 .preview-box {
@@ -229,20 +129,6 @@ select.form-input {
   margin-top: var(--space-md);
 }
 
-.btn-action {
-  border: none;
-  background: var(--primary-dark);
-  color: var(--white);
-  padding: 10px 28px;
-  border-radius: 999px;
-  cursor: pointer;
-  transition: .2s ease;
-}
-
-.btn-action:hover {
-  filter: brightness(1.1);
-}
-
 @media (max-width: 1024px) {
   .form-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -258,14 +144,6 @@ select.form-input {
 }
 
 @media (max-width: 768px) {
-  .content {
-    padding: var(--space-md);
-  }
-
-  .add-ingredient-card {
-    padding: var(--space-md);
-  }
-
   .form-row,
   .second-row {
     grid-template-columns: 1fr;
@@ -275,7 +153,7 @@ select.form-input {
     justify-content: stretch;
   }
 
-  .btn-action {
+  .form-actions .botao {
     width: 100%;
   }
 }

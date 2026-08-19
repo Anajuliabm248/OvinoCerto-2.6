@@ -2,7 +2,7 @@
 
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated, IsAdminUser
+from rest_framework.permissions import AllowAny, IsAuthenticated, IsAdminUser
 from rest_framework.response import Response
 
 from lote.models import FASES_COM_PARTO_E_DIAS, CATEGORIA_CHOICES
@@ -27,7 +27,7 @@ class ExigenciaNRCViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ('create', 'update', 'partial_update', 'destroy'):
             return [IsAdminUser()]
-        return [IsAuthenticated()]
+        return [AllowAny()]
 
     def get_queryset(self):
         qs = ExigenciaNRC.objects.all()

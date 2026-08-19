@@ -21,14 +21,14 @@
 </template>
 
 <script setup>
-import Header from '@/components/Header.vue'
+import Header from '@/components/layout/Header.vue'
 
 const menuItems = [
   { label: 'Propriedades', to: '/propriedades', dark: false },
-  { label: 'Ovinos', to: '/ovinos', dark: false },
+  { label: 'Ovinos', to: '/propriedades/ovinos', dark: false },
   { label: 'Ingredientes', to: '/ingredientes', dark: false },
-  { label: 'Exigências Nutricionais', to: '/formulacoes/exigencias', dark: false },
-  { label: 'Formulações', to: '/formulacoes', dark: false },
+  { label: 'Exigências Nutricionais', to: '/exigencias-nutricionais', dark: false },
+  { label: 'Formulações', to: '/formulacoes/ingredientes', dark: false },
   { label: 'Manual', to: '/frontpage', dark: true },
 ]
 </script>
