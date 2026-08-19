@@ -19,9 +19,9 @@ Fluxo:
   7. Registra evento INGREDIENTE_REMOVIDO.
   8. Dispara RecalcularFormulacaoService.
 
-Caso especial: se restar apenas 1 ingrediente após a remoção, ele
-absorve 100% automaticamente (MotorAdequacao.redistribuir trata isso
-como caso trivial).
+Caso especial: se restar apenas 1 ingrediente livre, ele absorve todo o
+espaço somente quando isso respeita seu limite máximo. Caso contrário,
+a remoção é rejeitada e a transação restaura o estado anterior.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from django.db import transaction
 
 from formulacao.engines.motor_adequacao import MotorAdequacao
 from formulacao.engines.motor_recalculo import MotorRecalculo
-from formulacao.models import IngredienteFormulacao, TipoEvento
+from formulacao.models import Formulacao, IngredienteFormulacao, TipoEvento
 from formulacao.repositories import (
     EventoRepository,
     ExigenciaRepository,
@@ -41,6 +41,7 @@ from formulacao.services.recalcular_formulacao_service import RecalcularFormulac
 
 
 class RemoverIngredienteService:
+    """Remove uma linha e redistribui o espaço sem violar os limites restantes."""
 
     @staticmethod
     @transaction.atomic
@@ -49,6 +50,7 @@ class RemoverIngredienteService:
         ing_form_id: int,
         usuario_id: int | None = None,
     ) -> None:
+        """Impede dieta vazia, remove a linha e redistribui as participações livres."""
         # ------------------------------------------------------------------
         # Validações
         # ------------------------------------------------------------------
@@ -114,6 +116,9 @@ class RemoverIngredienteService:
             requisitos=requisitos,
             participacao_atual=participacao,
             configuracoes=configuracoes,
+            percentual_alvo_volumoso=Formulacao.objects.values_list(
+                "percentual_alvo_volumoso", flat=True
+            ).get(pk=formulacao_id),
         )
 
         ids = participacao.ids_ingredientes

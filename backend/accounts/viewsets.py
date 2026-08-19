@@ -1,5 +1,5 @@
-""" viewsets do app de accounts"""
-from rest_framework import viewsets, status, generics
+"""Endpoints de cadastro, login e manutenção do próprio perfil."""
+from rest_framework import generics, mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
@@ -13,11 +13,12 @@ from .serializers import UsuarioSerializer, RegisterSerializer, LoginSerializer
 
 
 class RegisterView(generics.CreateAPIView):
-    """POST /api/auth/register/ ->  cria usuário e devolve tokens JWT."""
+    """Cria conta e perfil e já entrega os tokens JWT para o primeiro acesso."""
     serializer_class = RegisterSerializer
     permission_classes = [AllowAny]
 
     def create(self, request, *args, **kwargs):
+        """Valida o cadastro, persiste os dois registros e monta a resposta JWT."""
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         usuario = serializer.save()
@@ -33,12 +34,12 @@ class RegisterView(generics.CreateAPIView):
         )
 
 class LoginView(generics.GenericAPIView):
-    """POST /api/auth/login/  ->  valida credenciais e devolve tokens JWT."""
+    """Autentica uma conta ativa e devolve tokens JWT e dados do perfil."""
     serializer_class = LoginSerializer
     permission_classes = [AllowAny]
 
     def post(self, request, *args, **kwargs):
-        '''Valida credenciais e devolve tokens JWT.'''
+        """Valida as credenciais e serializa o perfil, quando ele existe."""
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -58,23 +59,33 @@ class LoginView(generics.GenericAPIView):
             }
         )
 
-class UsuarioViewSet(viewsets.ModelViewSet):
-    '''ViewSet para o model Usuario.'''
+class UsuarioViewSet(
+    mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.UpdateModelMixin,
+    viewsets.GenericViewSet,
+):
+    """Lista e atualiza perfis visíveis; cadastro continua na rota de registro.
+
+    Usuários comuns enxergam apenas o próprio perfil. Contas administrativas do
+    Django podem consultar todos. A API não oferece exclusão de perfil, porque
+    apagar somente esta linha deixaria uma conta autenticável órfã.
+    """
     serializer_class = UsuarioSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        '''Retorna o queryset de usuários com base no perfil do usuário autenticado.'''
+        """Restringe usuários comuns ao próprio perfil e libera a lista ao staff."""
         user = self.request.user
-        if user.is_staff or user.is_superuser:
+        perfil = getattr(user, 'perfil_usuario', None)
+        if user.is_staff or user.is_superuser or (
+            perfil and perfil.pode_gerenciar_usuarios
+        ):
             return Usuario.objects.select_related('user').all()
-        try:
-            return Usuario.objects.filter(user=user)
-        except Usuario.DoesNotExist:
-            return Usuario.objects.none()
+        return Usuario.objects.filter(user=user).select_related('user')
 
     def filter_queryset(self, queryset):
-        '''filtro de busca para o queryset de usuários com base no parâmetro de pesquisa.'''
+        """Aplica busca textual aos perfis que já passaram pela autorização."""
         search = self.request.query_params.get('search', '')
         if search:
             queryset = queryset.filter(
@@ -87,7 +98,7 @@ class UsuarioViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
     def me(self, request):
-        """GET /api/usuarios/me/  ->  perfil do usuário autenticado."""
+        """Retorna o perfil ligado à conta autenticada ou uma resposta 404 clara."""
         try:
             usuario = request.user.perfil_usuario
             return Response(UsuarioSerializer(usuario).data)
@@ -99,7 +110,7 @@ class UsuarioViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['patch'], permission_classes=[IsAuthenticated])
     def atualizar_perfil(self, request, pk=None):
-        """PATCH /api/usuarios/{id}/atualizar_perfil/"""
+        """Atualiza parcialmente os dados permitidos de um perfil visível."""
         usuario = self.get_object()
         serializer = self.get_serializer(usuario, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)

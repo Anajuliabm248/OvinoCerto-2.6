@@ -1,7 +1,11 @@
-""" models do app de ingrediente"""
+"""Catálogo nutricional e preços particulares de ingredientes.
+
+Ingredientes Valadares são compartilhados e somente leitura. Ingredientes
+customizados pertencem a um usuário. Preços ficam em uma tabela separada para
+que cada produtor possa manter valores regionais sem alterar o catálogo comum.
+"""
 
 from django.db import models
-import numpy as np
 from accounts.models import Usuario
 
 # pylint: disable= no-member, too-few-public-methods
@@ -39,8 +43,8 @@ class Ingrediente(models.Model):
     """
     Ingrediente para formulação de dietas ovinas.
 
-    - fonte_valadares=True  →  ingrediente da base do excel, read-only
-    - fonte_valadares=False →  ingrediente customizado pelo usuário
+    ``fonte_valadares=True`` identifica linhas públicas importadas da tabela.
+    As demais linhas são customizadas e devem ter um usuário proprietário.
     """
 
     usuario = models.ForeignKey(
@@ -84,6 +88,16 @@ class Ingrediente(models.Model):
     )
 
     # Limite de inclusão na formulação
+    limite_min_participacao = models.FloatField(
+        null=True,
+        blank=True,
+        verbose_name='Limite mínimo de participação (% MS)',
+        help_text=(
+            'Percentual mínimo (0-100) na matéria seca total. Use apenas '
+            'quando houver justificativa técnica para a inclusão do ingrediente. '
+            'Para dose fixa, informe o mesmo valor no limite máximo.'
+        ),
+    )
     limite_max_participacao = models.FloatField(
         null=True,
         blank=True,
@@ -91,7 +105,8 @@ class Ingrediente(models.Model):
         help_text=(
             'Percentual máximo (0-100) que este ingrediente pode representar '
             'na matéria seca total de uma formulação (ex.: bicarbonato de sódio '
-            'limitado a 1.5%). Deixe em branco para não aplicar nenhum limite.'
+            'limitado a 1.5%). Use o mesmo valor do limite mínimo para uma dose '
+            'fixa. Deixe em branco para não aplicar nenhum limite.'
         ),
     )
 
@@ -106,7 +121,7 @@ class Ingrediente(models.Model):
     dt_atualizacao = models.DateTimeField(auto_now=True)
 
     class Meta:
-        '''classe meta, define o nome do model e a ordenação padrão'''
+        """Ordena o catálogo por classe, tipo e nome para facilitar seleção."""
         verbose_name          = 'Ingrediente'
         verbose_name_plural   = 'Ingredientes'
         ordering              = ['classificacao', 'tipo', 'nome']
@@ -116,9 +131,85 @@ class Ingrediente(models.Model):
         ]
 
     def __str__(self):
+        """Mostra nome, tipo e origem do ingrediente em listas administrativas."""
         origem = 'Valadares' if self.fonte_valadares else 'Custom'
         return f'{self.nome} [{self.get_tipo_display()} / {origem}]'
 
-    def to_vetor_nutricional(self):
-        """Retorna array numpy com [pb, ndt, fdn, ee, ca, p] em %."""
-        return np.array([self.pb, self.ndt, self.fdn, self.ee, self.ca, self.p])
+
+class OrigemAlteracaoPrecoChoices(models.TextChoices):
+    """Indica se o preço veio do catálogo pessoal ou de uma formulação."""
+    CATALOGO   = "CATALOGO",   "Banco de preços do usuário"
+    FORMULACAO = "FORMULACAO", "Override local (uma receita)"
+
+
+class PrecoIngredienteUsuario(models.Model):
+    """
+    O "banco de preços regional" do usuário (requisito #1 da Fase 2).
+
+    Ingrediente.custo_kg NÃO é usado para resolver o preço de um
+    ingrediente numa formulação — ele é compartilhado por TODOS os
+    usuários (é o catálogo Valadares, read-only por design, ver
+    _verificar_propriedade em ingrediente/viewsets.py). Se o preço
+    regional de um produtor fosse gravado ali, vazaria para o catálogo
+    de todos os outros produtores que usam o mesmo ingrediente.
+
+    Esta tabela existe justamente para isolar isso: cada usuário tem,
+    no máximo, um preço próprio por ingrediente (Valadares ou custom),
+    independente de quem é o dono do Ingrediente. É o destino real do
+    escopo="geral" em AtualizarPrecoIngredienteService.
+    """
+    usuario = models.ForeignKey(
+        Usuario,
+        on_delete=models.CASCADE,
+        related_name='precos_ingredientes',
+    )
+    ingrediente = models.ForeignKey(
+        Ingrediente,
+        on_delete=models.CASCADE,
+        related_name='precos_usuarios',
+    )
+    preco_kg_mn = models.FloatField(verbose_name='Preço (R$/kg MN)')
+    dt_atualizacao = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        """Garante um único preço regional por usuário e ingrediente."""
+        verbose_name        = 'Preço de Ingrediente (usuário)'
+        verbose_name_plural  = 'Preços de Ingredientes (usuário)'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['usuario', 'ingrediente'],
+                name='unico_preco_por_usuario_ingrediente',
+            ),
+        ]
+
+    def __str__(self):
+        """Resume ingrediente, usuário e preço para auditoria administrativa."""
+        return f'{self.ingrediente.nome} — {self.usuario} — R$ {self.preco_kg_mn:.2f}/kg'
+
+
+class HistoricoPrecoIngrediente(models.Model):
+    """Registro imutável de uma alteração de preço feita por um usuário."""
+    ingrediente = models.ForeignKey(
+        Ingrediente,
+        on_delete=models.CASCADE,
+        related_name='historico_precos',
+    )
+    usuario = models.ForeignKey(
+        Usuario,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='historico_precos_ingredientes',
+    )
+    preco_anterior = models.FloatField(null=True)
+    preco_novo = models.FloatField(null=True)
+    origem_alteracao = models.CharField(
+        max_length=15,
+        choices=OrigemAlteracaoPrecoChoices.choices,
+    )
+    dt_alteracao = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        """Exibe primeiro as alterações de preço mais recentes."""
+        verbose_name         = 'Histórico de Preço'
+        verbose_name_plural   = 'Históricos de Preço'
+        ordering              = ['-dt_alteracao']

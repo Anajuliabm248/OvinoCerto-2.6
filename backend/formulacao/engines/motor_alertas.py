@@ -32,10 +32,12 @@ from dataclasses import dataclass
 
 from formulacao.domain.resultado import ResultadoAdequacao
 from formulacao.domain.requisito import StatusAdequacao
+from formulacao.engines.motor_custo import SaidaCusto
 
 
 @dataclass(frozen=True)
 class ThresholdsSeveridade:
+    """Centraliza os cortes que transformam desvios em níveis de atenção."""
     info_max:    float = 0.05   # até 5%  → INFO
     atencao_max: float = 0.20   # até 20% → ATENCAO; acima → CRITICO
 
@@ -68,6 +70,7 @@ class ParticipacaoIngredienteLimite:
 
 
 class MotorAlertas:
+    """Traduz desvios nutricionais, estruturais e de custo em alertas legíveis."""
 
     @staticmethod
     def avaliar(
@@ -199,6 +202,38 @@ class MotorAlertas:
             })
 
         return alertas
+
+    @staticmethod
+    def avaliar_custo(saida_custo: SaidaCusto) -> list[dict]:
+        """
+        Gera um único alerta de severidade ATENCAO quando pelo menos um
+        ingrediente da formulação não tem preço cadastrado (nem override
+        local, nem catálogo geral) — os indicadores de custo
+        (custo_ms_kg, custo_mn_kg, custo_animal_dia, custo_lote_dia)
+        estão subestimados enquanto isso não for corrigido.
+
+        Diferente dos alertas nutricionais, não há "magnitude" de desvio
+        aqui — é um sinal binário (falta preço / não falta), por isso
+        não reaproveita _severidade_nutricional.
+
+        Retorna dict pronto para AlertaRepository.upsert_alertas(),
+        mesma estrutura dos demais (nutriente=None, sem
+        ingrediente_formulacao_id — o alerta é da formulação como um
+        todo, não de uma linha específica, pois o MotorCusto não expõe
+        QUAIS ingredientes estão sem preço, apenas que existe ao menos
+        um).
+        """
+        if not saida_custo.tem_ingrediente_sem_preco:
+            return []
+
+        return [{
+            "nutriente":           None,
+            "tipo":                "CUSTO_INDISPONIVEL",
+            "severidade":          "ATENCAO",
+            "valor_atual":         0.0,
+            "valor_limite":        0.0,
+            "magnitude_relativa":  0.0,
+        }]
 
     @staticmethod
     def _severidade_nutricional(

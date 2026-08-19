@@ -1,4 +1,4 @@
-"""viewset do app de propriedade"""
+"""CRUD de propriedades com isolamento entre os usuários do sistema."""
 
 from rest_framework import serializers, viewsets
 from rest_framework.permissions import IsAuthenticated
@@ -11,8 +11,11 @@ from .serializers import PropriedadeSerializer
 # pylint: disable= no-member, too-many-ancestors
 
 class PropriedadeViewSet(viewsets.ModelViewSet):
-    '''
-    ViewSet para o modelo Propriedade
+    """
+    Administra somente propriedades visíveis para a conta autenticada.
+
+    A associação com o perfil é feita pelo servidor e nunca aceita um usuário
+    arbitrário enviado no corpo da requisição.
     - GET  /api/propriedades/            → lista todas as propriedades do usuário logado
     - GET  /api/propriedades/?search=    → busca por nome, proprietário, 
                                             uf, cidade ou localidade
@@ -20,12 +23,13 @@ class PropriedadeViewSet(viewsets.ModelViewSet):
                                             (associada ao usuário logado)
     - PUT/PATCH /api/propriedades/{id}/  → atualiza uma propriedade (só as próprias)
     - DELETE /api/propriedades/{id}/     → exclui uma propriedade (só as próprias)
-    '''
+    """
     serializer_class = PropriedadeSerializer
     permission_classes = [IsAuthenticated]
 
     # Queryset restrito ao usuário autenticado
     def get_queryset(self):
+        """Restringe usuários comuns às próprias propriedades."""
         user = self.request.user
         if user.is_staff or user.is_superuser:
             return Propriedade.objects.select_related('usuario').all()
@@ -36,6 +40,7 @@ class PropriedadeViewSet(viewsets.ModelViewSet):
             return Propriedade.objects.none()
 
     def filter_queryset(self, queryset):
+        """Busca o texto informado nos principais dados de identificação e local."""
         search = self.request.query_params.get('search', '')
         if search:
             queryset = queryset.filter(
@@ -49,6 +54,7 @@ class PropriedadeViewSet(viewsets.ModelViewSet):
 
     # Associa automaticamente ao perfil do usuário logado
     def perform_create(self, serializer):
+        """Associa a propriedade ao perfil autenticado ou explica a falta dele."""
         try:
             perfil = self.request.user.perfil_usuario
             serializer.save(usuario=perfil)

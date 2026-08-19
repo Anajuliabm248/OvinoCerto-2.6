@@ -1,4 +1,9 @@
-""" configurações do model de usuario """
+"""Perfis complementares dos usuários autenticados pelo Django.
+
+O model nativo de autenticação guarda senha, sessão e estado da conta. Este
+app mantém os dados de negócio usados pelo OvinoCerto, como contato, localidade
+e perfil de acesso.
+"""
 
 from django.conf import settings
 from django.db import models
@@ -6,13 +11,13 @@ from django.db import models
 # pylint: disable=too-few-public-methods, invalid-str-returned
 
 class Perfil(models.TextChoices):
-    '''Enumeração para os perfis de usuário do sistema.'''
+    """Papéis de negócio disponíveis para um perfil do OvinoCerto."""
     ADMIN = 'ADMIN', 'Administrador do Sistema'
     USER = 'USER', 'Usuario do Sistema'
 
 
 class Usuario(models.Model):
-    '''Model para representar um usuário do sistema.'''
+    """Dados de negócio ligados, um para um, à conta autenticável do Django."""
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -35,25 +40,26 @@ class Usuario(models.Model):
     )
 
     class Meta:
-        '''classe meta, define o nome do model e a ordenação padrão'''
+        """Define os nomes exibidos no admin e a ordenação por nome."""
         verbose_name = 'Usuario'
         verbose_name_plural = 'Usuarios'
         ordering = ['nome']
 
     def __str__(self):
+        """Usa o nome da pessoa nas telas administrativas e nos logs."""
         return self.nome
 
     @property
     def is_admin(self):
-        '''Verifica se o usuário possui perfil de administrador.'''
+        """Informa se o perfil possui o papel administrativo de negócio."""
         return self.perfil == Perfil.ADMIN
 
     @property
     def is_user(self):
-        '''Verifica se o usuário possui perfil de usuário.'''
+        """Informa se o perfil é um usuário comum do sistema."""
         return self.perfil == Perfil.USER
 
     @property
     def pode_gerenciar_usuarios(self):
-        '''Verifica se o usuário possui permissão para gerenciar outros usuários.'''
+        """Centraliza a regra de autorização para gerenciar outros perfis."""
         return self.perfil == Perfil.ADMIN

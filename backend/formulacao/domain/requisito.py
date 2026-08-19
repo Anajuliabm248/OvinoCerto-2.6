@@ -34,6 +34,7 @@ from .nutrientes import Nutriente
 
 
 class Operador(str, Enum):
+    """Operações disponíveis para comparar resultado e exigência nutricional."""
     IGUAL = "="
     MAIOR_IGUAL = ">="
     MENOR_IGUAL = "<="
@@ -41,6 +42,7 @@ class Operador(str, Enum):
 
 
 class StatusAdequacao(str, Enum):
+    """Estados possíveis depois da avaliação de um requisito nutricional."""
     ATENDE = "ATENDE"
     DEFICIT = "DEFICIT"
     EXCESSO = "EXCESSO"
@@ -109,6 +111,7 @@ class RequisitoNutriente:
         valor_origem_nrc: float | None = None,
         alterado_pelo_usuario: bool = False,
     ) -> "RequisitoNutriente":
+        """Cria um alvo com pequena faixa numérica ao redor do valor pedido."""
         tol = cls.TOLERANCIA_IGUALDADE
         return cls(
             nutriente=nutriente,
@@ -128,6 +131,7 @@ class RequisitoNutriente:
         valor_origem_nrc: float | None = None,
         alterado_pelo_usuario: bool = False,
     ) -> "RequisitoNutriente":
+        """Cria um requisito que aceita o valor mínimo sem impor teto."""
         return cls(
             nutriente=nutriente,
             operador=Operador.MAIOR_IGUAL,
@@ -146,6 +150,7 @@ class RequisitoNutriente:
         valor_origem_nrc: float | None = None,
         alterado_pelo_usuario: bool = False,
     ) -> "RequisitoNutriente":
+        """Cria um requisito que aceita o valor máximo sem impor piso."""
         return cls(
             nutriente=nutriente,
             operador=Operador.MENOR_IGUAL,
@@ -165,6 +170,7 @@ class RequisitoNutriente:
         valor_origem_nrc: float | None = None,
         alterado_pelo_usuario: bool = False,
     ) -> "RequisitoNutriente":
+        """Cria uma faixa fechada entre um limite mínimo e outro máximo."""
         return cls(
             nutriente=nutriente,
             operador=Operador.ENTRE,
@@ -187,11 +193,18 @@ class RequisitoNutriente:
           percentual em relação ao limite violado
           (ex.: 0.20 = 20% abaixo/acima do limite).
         """
-        if self.valor_min is not None and valor_atual < self.valor_min:
+        tolerancia_numerica = 1e-9
+        if (
+            self.valor_min is not None
+            and valor_atual < self.valor_min - tolerancia_numerica
+        ):
             magnitude = (self.valor_min - valor_atual) / self.valor_min if self.valor_min else 0.0
             return StatusAdequacao.DEFICIT, abs(magnitude)
 
-        if self.valor_max is not None and valor_atual > self.valor_max:
+        if (
+            self.valor_max is not None
+            and valor_atual > self.valor_max + tolerancia_numerica
+        ):
             magnitude = (valor_atual - self.valor_max) / self.valor_max if self.valor_max else 0.0
             return StatusAdequacao.EXCESSO, abs(magnitude)
 

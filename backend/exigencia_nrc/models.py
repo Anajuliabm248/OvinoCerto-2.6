@@ -1,4 +1,4 @@
-""" models do app de exigencias nutricionais segundo NRC"""
+"""Tabela de referência nutricional usada como ponto de partida das dietas."""
 
 from django.db import models
 
@@ -109,7 +109,7 @@ class ExigenciaNRC(models.Model):
     )
 
     class Meta:
-        '''classe meta, define o nome do model e a ordenação padrão'''
+        """Ordena e indexa as colunas mais usadas na escolha da exigência."""
         verbose_name = 'Exigência Nutricional (NRC)'
         verbose_name_plural = 'Exigências Nutricionais (NRC)'
         ordering = ['categoria', 'fase', 'pv_kg', 'gmd_kg']
@@ -118,6 +118,7 @@ class ExigenciaNRC(models.Model):
         ]
 
     def __str__(self):
+        """Resume categoria, fase, peso e ganho diário da linha NRC."""
         gmd_str = f' GMD={self.gmd_kg}' if self.gmd_kg else ''
         return f'{self.get_categoria_display()} | {self.get_fase_display()} \
             | PV={self.pv_kg}kg{gmd_str}'

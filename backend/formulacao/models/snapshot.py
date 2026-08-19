@@ -87,7 +87,9 @@ class TipoEvento(models.TextChoices):
     EXIGENCIA_ALTERADA       = "EXIGENCIA_ALTERADA",       "Exigência configurada alterada"
     RECALCULO_SOLICITADO     = "RECALCULO_SOLICITADO",     "Recálculo explícito solicitado"
     REDISTRIBUICAO_EXECUTADA = "REDISTRIBUICAO_EXECUTADA", "Redistribuição automática executada"
+    PERCENTUAL_VOLUMOSO_ALTERADO = "PERCENTUAL_VOLUMOSO_ALTERADO", "Alvo de volumosos alterado"
     VERSAO_RESTAURADA        = "VERSAO_RESTAURADA",        "Estado restaurado a partir de snapshot"
+    PRECO_ATUALIZADO         = "PRECO_ATUALIZADO",         "Preço de ingrediente atualizado"
 
 
 class EventoFormulacao(models.Model):

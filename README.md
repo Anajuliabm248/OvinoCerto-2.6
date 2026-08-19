@@ -16,16 +16,59 @@ O **OvinoCerto** é uma aplicação web voltada para a otimização e automatiza
   - Edição dos nutrientes da exigência utilizando operadores lógicos para guiar o balanceamento (`<=`, `>=`, `=`, `ENTRE`).
   - Filtros avançados para otimização de custo da ração.
 
----
 
-## 🌐 Base URL
-```
-/api
-```
+## Regras importantes da formulação
 
----
+- `ms_porcent` é salvo no banco em percentual de `0` a `100`.
+- Os motores trabalham com frações de `0` a `1`.
+- A soma das participações deve terminar em `1.0`, isto é, 100% da MS.
+- O percentual de volumoso informado é um alvo estrutural rígido.
+- Limites máximos por ingrediente são rígidos na geração e na redistribuição.
+- Participações `MANUAL_TRAVADA` não são alteradas automaticamente.
+- Exigências nutricionais são atendidas por melhor esforço. Se a seleção de
+  ingredientes não permitir atendê-las, a estrutura da dieta continua válida e
+  os desvios aparecem como alertas.
+- O preço regional pertence ao usuário. Um preço local da receita não altera o
+  catálogo nem outras formulações.
+- Parâmetros de viabilidade são uma cópia de simulação: editá-los não altera o
+  lote, a exigência NRC ou a formulação nutricional.
 
-## 📚 Documentação da API (Endpoints)
+## Requisitos
+
+- Python 3.11 ou mais recente.
+- Node.js 20 ou mais recente.
+- SQLite para desenvolvimento ou PostgreSQL para ambientes compartilhados.
+
+## Instalação
+
+Instalação via Docker será adicionada na fase final.
+
+## Como o sistema está organizado
+
+O repositório possui duas aplicações:
+
+- `backend/`: API Django REST Framework, autenticação JWT e motores de cálculo.
+- `frontend/`: interface Vue 3 criada com Vite, Pinia, Vue Router e Axios.
+
+Os apps do backend têm responsabilidades bem separadas:
+
+| App | Responsabilidade |
+| --- | --- |
+| `accounts` | Conta Django, perfil de negócio, cadastro e login. |
+| `propriedade` | Propriedades pertencentes ao usuário autenticado. |
+| `lote` | Dados zootécnicos e agrupamento dos animais. |
+| `exigencia_nrc` | Catálogo de referências nutricionais NRC. |
+| `ingrediente` | Catálogo Valadares, ingredientes customizados e preços pessoais. |
+| `formulacao` | Formulação, recálculo, alertas, custos, versões e viabilidade. |
+
+
+
+## 📚 API e documentação interativa
+
+### Documentação interativa
+- Swagger: `http://localhost:8000/api/schema/swagger-ui/`
+- ReDoc: `http://localhost:8000/api/schema/redoc/`
+- Schema OpenAPI: `http://localhost:8000/api/schema/`
 
 ### 1. Autenticação (`/api/auth`)
 | Método | Endpoint | Descrição |
@@ -106,7 +149,10 @@ O **OvinoCerto** é uma aplicação web voltada para a otimização e automatiza
 | `DELETE` | `/api/formulacoes/{id}/ingredientes/{ing_form_id}/` | Remove um ingrediente específico da formulação. |
 | `PATCH` | `/api/formulacoes/{id}/ingredientes/{ing_form_id}/ajustar/` | Ajusta a porcentagem manualmente, travando o ingrediente e disparando recálculo automático. |
 | `POST` | `/api/formulacoes/{id}/ingredientes/{ing_form_id}/destravar/` | Remove a trava de um ingrediente, permitindo sua redistribuição automática na próxima alteração. |
-| `GET`  | `/api/formulacoes/{id}/sugestoes/` | Analisa a dieta e gera sugestões inteligentes de adição ou substituição de ingredientes. |
+| `GET`  | `/api/formulacoes/{id}/sugestoes/` | Analisa a dieta e gera sugestões inteligentes de adição |
+| `GET`  | `/api/formulacoes/{id}/sugestoes/?modo=substituir&ing_form_id=X ` | Analisa a dieta e gera sugestões inteligentes de substituição de um ingrediente X. |
+| `GET`  | `/api/formulacoes/{id}/sugestoes/?criterio=custo_beneficio` | Analisa a dieta e gera sugestões inteligentes de ingredientes de menor custo, seja para adição ou substituição. |
+
 
 #### Metas (Exigências) e Recálculo
 | Método | Endpoint | Descrição |
@@ -117,6 +163,16 @@ O **OvinoCerto** é uma aplicação web voltada para a otimização e automatiza
 | `POST` | `/api/formulacoes/{id}/recalcular/` | Aciona o recálculo do balanceamento da ração após alterações na configuração. |
 | `GET`  | `/api/formulacoes/{id}/resultado/` | Traz a análise e o resultado final da eficácia da dieta montada. |
 
+#### Custos e Viabilidade
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| `PATCH` | `/api/ingredientes/{id}/preco/` | Personaliza o preço (kg) do ingredinte no banco de dados do usuário (fica salvo para as formulações). |
+| `PATCH` | `/formulacoes/{id}/ingredientes/{ing_form_id}/preco/` | Personaliza o preço (kg) do ingredinte, podendo valer só para a receita, ou ser gravado no banco de dados do usuário (`"receita"` | `"geral"`). |
+| `POST` | `/formulacoes/{id}/viabilidade/parametros/` | Edita o quadro de índices zootécnicos e valor R$/Kg PV para a viabilidade conforme o lote atualizado. |
+| `GET`  | `/api/formulacoes/{id}/viabilidade/` | Custos e viabilidade da dieta. Visualiza custos por ingrediente e animal detalhadamente, além do preço minimo de venda e lucro. |
+| `GET`  | `/api/formulacoes/{id}/custos/` | Visualiza os valores de custo da MN, MS, animal e lote por dia além das especificações de custos por ingrediente. |
+
+
 #### Histórico, Versões e Auditoria (Snapshots)
 | Método | Endpoint | Descrição |
 |--------|----------|-----------|
@@ -124,3 +180,6 @@ O **OvinoCerto** é uma aplicação web voltada para a otimização e automatiza
 | `GET`  | `/api/formulacoes/{id}/versoes/` | Lista os 'snapshots' (versões congeladas no tempo) desta formulação. |
 | `GET`  | `/api/formulacoes/{id}/versoes/{versao_num}/` | Visualiza os ingredientes e dados de uma versão/snapshot específica. |
 | `POST` | `/api/formulacoes/{id}/versoes/{versao_num}/restaurar/` | Restaura a formulação atual revertendo os dados para uma versão anterior. |
+
+
+(ainda em desenvolvimento)

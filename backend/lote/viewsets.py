@@ -1,10 +1,10 @@
-"""viewsets do app de lote"""
+"""Endpoints de lotes, sempre isolados pela propriedade do usuário."""
 
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import NotFound, PermissionDenied
 from django.db.models import Q
 
 
@@ -18,8 +18,11 @@ from .serializers import LoteSerializer
 # pylint: disable= no-member, unused-argument, too-many-ancestors
 
 class LoteViewSet(viewsets.ModelViewSet):
-    '''
-    ViewSet para o modelo Lote.
+    """
+    Permite administrar os lotes que pertencem ao usuário autenticado.
+
+    Além do CRUD, fornece as linhas NRC mais próximas para que a pessoa
+    escolha conscientemente a referência usada na formulação.
     - GET  /api/lotes/                → todos os lotes do usuário logado
     - GET  /api/lotes/?search=        → busca por nome, raça, sistema, categoria ou fase
     - GET  /api/lotes/?propriedade_id= → filtra por propriedade
@@ -27,13 +30,13 @@ class LoteViewSet(viewsets.ModelViewSet):
     - PUT/PATCH /api/lotes/{id}/      → edita lote (propriedade deve pertencer ao usuário)
     - DELETE /api/lotes/{id}/         → exclui lote (propriedade deve pertencer ao usuário)
     - GET  /api/lotes/{id}/exigencia/ → sugere exigências NRC para escolha manual do usuário
-    '''
+    """
     serializer_class = LoteSerializer
     permission_classes = [IsAuthenticated]
 
     # Queryset restrito ao usuário autenticado (via propriedade)
     def get_queryset(self):
-        '''Retorna o queryset de lotes do usuário autenticado.'''
+        """Retorna apenas lotes próprios; administradores enxergam todos."""
         user = self.request.user
         if user.is_staff or user.is_superuser:
             return Lote.objects.select_related('propriedade__usuario').all()
@@ -46,7 +49,7 @@ class LoteViewSet(viewsets.ModelViewSet):
             return Lote.objects.none()
 
     def filter_queryset(self, queryset):
-        '''filtra o queryset de lotes com base nos parâmetros de busca e propriedade_id'''
+        """Aplica busca textual e filtro opcional por propriedade."""
         params = self.request.query_params
         search = params.get('search', '')
         propriedade_id = params.get('propriedade_id', '')
@@ -66,6 +69,7 @@ class LoteViewSet(viewsets.ModelViewSet):
 
     # Garante que a propriedade pertence ao usuário logado
     def perform_create(self, serializer):
+        """Confirma a propriedade antes de vincular e salvar o novo lote."""
         propriedade_id = self.request.data.get('propriedade')
         try:
             propriedade = self._get_propriedade_permitida(propriedade_id)
@@ -76,9 +80,15 @@ class LoteViewSet(viewsets.ModelViewSet):
         serializer.save(propriedade=propriedade)
 
     def _get_propriedade_permitida(self, propriedade_id):
+        """Busca uma propriedade dentro do conjunto permitido ao usuário atual."""
         qs = Propriedade.objects.all()
         if not (self.request.user.is_staff or self.request.user.is_superuser):
-            perfil = self.request.user.perfil_usuario
+            try:
+                perfil = self.request.user.perfil_usuario
+            except Usuario.DoesNotExist as exc:
+                raise PermissionDenied(
+                    'Complete seu perfil antes de cadastrar lotes.'
+                ) from exc
             qs = qs.filter(usuario=perfil)
         return qs.get(pk=propriedade_id)
 

@@ -29,7 +29,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from formulacao.domain.nutrientes import N_NUTRIENTES, NUTRIENTES_ORDEM, Nutriente, indice_de
+from formulacao.domain.nutrientes import N_NUTRIENTES, Nutriente, indice_de
 from formulacao.domain.participacao import ParticipacaoVetor
 from formulacao.domain.requisito import RequisitoNutriente
 from formulacao.domain.resultado import ResultadoAdequacao

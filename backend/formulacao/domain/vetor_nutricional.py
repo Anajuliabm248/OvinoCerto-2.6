@@ -45,6 +45,7 @@ class VetorNutricional:
 
     @classmethod
     def zeros(cls) -> "VetorNutricional":
+        """Cria um vetor vazio na ordem nutricional canônica."""
         return cls(valores=np.zeros(N_NUTRIENTES, dtype=float))
 
     @classmethod
@@ -63,10 +64,12 @@ class VetorNutricional:
     # Acesso
 
     def get(self, nutriente: Nutriente) -> float:
+        """Retorna o valor de um nutriente sem expor o índice interno do vetor."""
         idx = NUTRIENTES_ORDEM.index(nutriente)
         return float(self.valores[idx])
 
     def to_dict(self) -> dict[str, float]:
+        """Converte a ordem NumPy interna em um dicionário legível e serializável."""
         return {n.value: float(self.valores[i]) for i, n in enumerate(NUTRIENTES_ORDEM)}
 
 

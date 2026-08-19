@@ -3,24 +3,25 @@ Application Service - RestaurarVersaoService.
 
 Fase H do roadmap (seção 20).
 
-Restaura o estado de participações (%MS) de uma formulação a partir
-de um SnapshotFormulacao anterior, gerando uma nova versão — não
-sobrescreve o histórico existente.
+Restaura o estado de participações (%MS) e exigências configuradas de
+uma formulação a partir de um SnapshotFormulacao anterior, gerando uma
+nova versão — não sobrescreve o histórico existente.
 
 Estratégia
 ----------
 1. Carrega o snapshot pelo versao_num.
-2. Obtém a lista de participações do payload:
+2. Restaura a exigência configurada gravada no payload.
+3. Obtém a lista de participações do payload:
    [{id: <ing_form_id>, fracao: 0.30, origem: "CALCULADA"}, …]
-3. Mapeia por ing_form_id os IngredienteFormulacao existentes.
-4. Atualiza os que existem; ignora os que foram removidos.
-5. Remove da formulação ativa os ingredientes que não constam no
+4. Mapeia por ing_form_id os IngredienteFormulacao existentes.
+5. Atualiza os que existem; ignora os que foram removidos.
+6. Remove da formulação ativa os ingredientes que não constam no
    snapshot (foram adicionados depois).
-6. Dispara RecalcularFormulacaoService → novo snapshot.
+7. Dispara RecalcularFormulacaoService → novo snapshot.
 
-Cuidado com IGUAL / round-trip: a restauração não altera a
-ExigenciaConfigurada, apenas as participações — sem risco de
-double-tolerance em operadores IGUAL (conforme memória do projeto).
+Os valores dos operadores são restaurados como foram serializados. A
+tolerância do operador IGUAL continua sendo aplicada somente quando o
+requisito é reconstruído pela camada de domínio.
 """
 from __future__ import annotations
 
@@ -32,11 +33,16 @@ from formulacao.models import (
     OrigemParticipacaoChoices,
     TipoEvento,
 )
-from formulacao.repositories import EventoRepository, SnapshotRepository
+from formulacao.repositories import (
+    EventoRepository,
+    ExigenciaRepository,
+    SnapshotRepository,
+)
 from formulacao.services.recalcular_formulacao_service import RecalcularFormulacaoService
 
 
 class RestaurarVersaoService:
+    """Recupera uma versão antiga e cria outra versão auditável com esse estado."""
 
     @staticmethod
     @transaction.atomic
@@ -45,6 +51,7 @@ class RestaurarVersaoService:
         versao_num: int,
         usuario_id: int | None = None,
     ) -> Formulacao:
+        """Aplica participações antigas, recalcula e registra uma nova versão."""
         # 1. Carrega snapshot
         from formulacao.models import SnapshotFormulacao
         try:
@@ -60,27 +67,50 @@ class RestaurarVersaoService:
                 f"Snapshot versão {versao_num} não contém dados de participação."
             )
 
-        # 2. Monta mapa {ing_form_id: (fracao, origem)}
+        # 2. Restaura a exigência que estava vigente naquela versão antes
+        # de recalcular. O recálculo subsequente registra um novo snapshot
+        # coerente, com participações e exigências da mesma versão histórica.
+        ExigenciaRepository.restaurar_configuracao(
+            formulacao_id=formulacao_id,
+            configuracao_snapshot=snapshot.payload.get("exigencia_configurada"),
+        )
+        percentual_alvo_volumoso = snapshot.payload.get("percentual_alvo_volumoso")
+        if percentual_alvo_volumoso is not None:
+            try:
+                percentual_alvo_volumoso = float(percentual_alvo_volumoso)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    "A versão selecionada contém percentual de volumoso inválido."
+                ) from None
+            if not 0.0 <= percentual_alvo_volumoso <= 1.0:
+                raise ValueError(
+                    "A versão selecionada contém percentual de volumoso inválido."
+                )
+            Formulacao.objects.filter(pk=formulacao_id).update(
+                percentual_alvo_volumoso=percentual_alvo_volumoso
+            )
+
+        # 3. Monta mapa {ing_form_id: (fracao, origem)}
         snap_map: dict[int, tuple[float, str]] = {
             int(p["id"]): (float(p["fracao"]), p.get("origem", "CALCULADA"))
             for p in participacoes_snap
         }
         snap_ids = set(snap_map.keys())
 
-        # 3. Carrega IngredienteFormulacao atuais
+        # 4. Carrega IngredienteFormulacao atuais
         atuais = list(
             IngredienteFormulacao.objects.filter(formulacao_id=formulacao_id)
         )
         atuais_ids = {obj.pk for obj in atuais}
 
-        # 4. Remove ingredientes que não constam no snapshot
+        # 5. Remove ingredientes que não constam no snapshot
         ids_remover = atuais_ids - snap_ids
         if ids_remover:
             IngredienteFormulacao.objects.filter(
                 pk__in=ids_remover, formulacao_id=formulacao_id
             ).delete()
 
-        # 5. Atualiza participações dos que existem no snapshot
+        # 6. Atualiza participações dos que existem no snapshot
         para_update: list[IngredienteFormulacao] = []
         for obj in atuais:
             if obj.pk in snap_map:
@@ -96,11 +126,8 @@ class RestaurarVersaoService:
 
         # IDs presentes no snapshot mas removidos da formulação (sem restauração possível)
         ids_ausentes = snap_ids - atuais_ids
-        if ids_ausentes:
-            # Não bloqueia — apenas registra no evento de auditoria.
-            pass
 
-        # 6. Recalcula → novo snapshot
+        # 7. Recalcula → novo snapshot
         motivo = f"restauração da versão {versao_num}"
         RecalcularFormulacaoService.executar(
             formulacao_id=formulacao_id,
@@ -114,6 +141,8 @@ class RestaurarVersaoService:
             payload={
                 "acao": "restaurar_versao",
                 "versao_restaurada": versao_num,
+                "exigencias_restauradas": True,
+                "percentual_alvo_volumoso_restaurado": percentual_alvo_volumoso,
                 "ids_ausentes": list(ids_ausentes),
                 "ids_removidos": list(ids_remover),
             },

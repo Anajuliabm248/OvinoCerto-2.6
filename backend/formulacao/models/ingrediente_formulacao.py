@@ -19,6 +19,12 @@ class OrigemParticipacaoChoices(models.TextChoices):
     MANUAL_TRAVADA = "MANUAL_TRAVADA", "Travada pelo usuário"
 
 
+class OrigemCustoChoices(models.TextChoices):
+    """Distingue preço regional do usuário e preço particular da receita."""
+    CATALOGO       = "CATALOGO",       "Banco de preços do usuário"
+    OVERRIDE_LOCAL = "OVERRIDE_LOCAL", "Sobrescrito nesta formulação"
+
+
 class IngredienteFormulacao(models.Model):
     """
     Participação de UM ingrediente em UMA formulação.
@@ -32,7 +38,9 @@ class IngredienteFormulacao(models.Model):
     pelo repositório após cada recálculo — nunca editados diretamente.
     mn_kg é calculado a partir de ms_kg / (ms% / 100).
 
-    custo_dia não existe nesta fase (pertence à fase econômica futura).
+    Campos de custo (custo_kg_mn_override, origem_custo, custo_dia)
+    pertencem à Fase 2 — ver docstring de OrigemCustoChoices e
+    formulacao/engines/motor_custo.py.
     """
 
     formulacao = models.ForeignKey(
@@ -85,6 +93,31 @@ class IngredienteFormulacao(models.Model):
     ee_kg  = models.FloatField(default=0.0, verbose_name="EE (kg/dia)")
     ca_kg  = models.FloatField(default=0.0, verbose_name="Ca (kg/dia)")
     p_kg   = models.FloatField(default=0.0, verbose_name="P (kg/dia)")
+
+    
+    # Custo (Fase 2)
+    
+
+    custo_kg_mn_override = models.FloatField(
+        null=True, blank=True,
+        verbose_name="Custo local (R$/kg MN)",
+        help_text=(
+            "Preenchido quando o usuário escolhe 'atualizar preço só "
+            "nesta receita'. Null = usa o banco de preços regional do "
+            "usuário (PrecoIngredienteUsuario)."
+        ),
+    )
+    origem_custo = models.CharField(
+        max_length=17,
+        choices=OrigemCustoChoices.choices,
+        default=OrigemCustoChoices.CATALOGO,
+        verbose_name="Origem do custo",
+    )
+    custo_dia = models.FloatField(
+        default=0.0,
+        verbose_name="Custo (R$/animal/dia)",
+        help_text="Calculado pelo MotorCusto via repositório — nunca editado diretamente.",
+    )
 
     class Meta:
         '''configurações básicas do banco de dados'''

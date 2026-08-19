@@ -10,13 +10,18 @@
 db.sqlite3
 static/
 media/
+base_ovino.xls
+pdf_frontend/
 diagramas/
 anotacoes.md
+reuniao.md
 
 # Django stuff
 *.log
 *.pot
 *.pyc
 __pycache__/
-
-
+*.py[cod]
+.env
+frontend/.env.local
+frontend/dist/

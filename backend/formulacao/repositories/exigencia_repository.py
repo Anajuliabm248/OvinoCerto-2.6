@@ -19,6 +19,7 @@ from django.db import transaction
 from exigencia_nrc.models import ExigenciaNRC
 from formulacao.domain.nutrientes import Nutriente
 from formulacao.domain.requisito import Operador, RequisitoNutriente
+from formulacao.engines.estimador_referencia import ContextoZootecnico
 from formulacao.models import (
     ConfiguracaoNutriente,
     ExigenciaConfigurada,
@@ -28,6 +29,7 @@ from formulacao.models import (
 
 
 class ExigenciaRepository:
+    """Traduz a exigência configurada no banco para objetos do domínio puro."""
 
     # ------------------------------------------------------------------
     # Leitura: DB → Domínio
@@ -95,6 +97,36 @@ class ExigenciaRepository:
             return None
 
     @staticmethod
+    def get_contexto_zootecnico(
+        formulacao_id: int,
+    ) -> ContextoZootecnico | None:
+        """Contexto da linha NRC de origem usado apenas na estimativa inicial."""
+        try:
+            exigencia = (
+                ExigenciaConfigurada.objects
+                .select_related("exigencia_nrc_origem")
+                .get(formulacao_id=formulacao_id)
+            )
+        except ExigenciaConfigurada.DoesNotExist:
+            return None
+
+        origem = exigencia.exigencia_nrc_origem
+        if (
+            origem is None
+            or origem.pv_kg is None
+            or origem.gmd_kg is None
+            or exigencia.cms_kg is None
+        ):
+            return None
+        return ContextoZootecnico(
+            categoria=origem.categoria,
+            fase=origem.fase,
+            peso_vivo_kg=float(origem.pv_kg),
+            gmd_kg=float(origem.gmd_kg),
+            cms_kg=float(exigencia.cms_kg),
+        )
+
+    @staticmethod
     def serializar_configuracao(formulacao_id: int) -> dict | None:
         """
         Retorna a exigência configurada vigente em formato simples para
@@ -140,6 +172,125 @@ class ExigenciaRepository:
                 for config in configs
             ],
         }
+
+    @staticmethod
+    @transaction.atomic
+    def restaurar_configuracao(
+        formulacao_id: int,
+        configuracao_snapshot: dict | None,
+    ) -> None:
+        """Restaura a cópia de exigências gravada em um snapshot.
+
+        O snapshot é a fonte de verdade de uma versão histórica. Portanto,
+        além dos limites e operadores, restaura CMS, origem NRC e a indicação
+        de alteração manual de cada nutriente. Não cria histórico individual:
+        o evento de restauração já registra a operação como um todo.
+        """
+        if not isinstance(configuracao_snapshot, dict):
+            raise ValueError(
+                "A versão selecionada não contém exigências configuradas para restaurar."
+            )
+
+        configuracoes_snapshot = configuracao_snapshot.get("configuracoes")
+        if not isinstance(configuracoes_snapshot, list) or not configuracoes_snapshot:
+            raise ValueError(
+                "A versão selecionada não contém exigências configuradas para restaurar."
+            )
+
+        try:
+            cms_kg = float(configuracao_snapshot["cms_kg"])
+        except (KeyError, TypeError, ValueError):
+            raise ValueError(
+                "A versão selecionada contém CMS inválido nas exigências configuradas."
+            ) from None
+
+        if cms_kg <= 0:
+            raise ValueError(
+                "A versão selecionada contém CMS inválido nas exigências configuradas."
+            )
+
+        nutrientes_snapshot: set[str] = set()
+        for configuracao in configuracoes_snapshot:
+            if not isinstance(configuracao, dict):
+                raise ValueError("A versão selecionada contém uma exigência inválida.")
+            try:
+                nutriente = Nutriente(configuracao["nutriente"])
+                Operador(configuracao["operador"])
+            except (KeyError, TypeError, ValueError):
+                raise ValueError("A versão selecionada contém uma exigência inválida.") from None
+            if nutriente.value in nutrientes_snapshot:
+                raise ValueError("A versão selecionada contém nutrientes duplicados.")
+            nutrientes_snapshot.add(nutriente.value)
+
+        try:
+            exigencia = ExigenciaConfigurada.objects.select_for_update().get(
+                formulacao_id=formulacao_id
+            )
+        except ExigenciaConfigurada.DoesNotExist:
+            raise ValueError(
+                f"Formulação {formulacao_id} não possui ExigenciaConfigurada."
+            ) from None
+
+        origem_id = configuracao_snapshot.get("exigencia_nrc_origem_id")
+        if origem_id is not None and not ExigenciaNRC.objects.filter(pk=origem_id).exists():
+            # A referência é apenas rastreável/read-only; se foi excluída,
+            # os valores copiados no snapshot continuam suficientes.
+            origem_id = None
+
+        exigencia.cms_kg = cms_kg
+        exigencia.exigencia_nrc_origem_id = origem_id
+        exigencia.save(update_fields=["cms_kg", "exigencia_nrc_origem"])
+
+        existentes = {
+            config.nutriente: config
+            for config in ConfiguracaoNutriente.objects.select_for_update().filter(
+                exigencia_configurada=exigencia
+            )
+        }
+        para_atualizar: list[ConfiguracaoNutriente] = []
+        para_criar: list[ConfiguracaoNutriente] = []
+
+        for snapshot in configuracoes_snapshot:
+            nutriente = snapshot["nutriente"]
+            valores = {
+                "operador": snapshot["operador"],
+                "valor_min": snapshot.get("valor_min"),
+                "valor_max": snapshot.get("valor_max"),
+                "valor_origem_nrc": snapshot.get("valor_origem_nrc"),
+                "alterado_pelo_usuario": bool(snapshot.get("alterado_pelo_usuario", False)),
+            }
+            configuracao = existentes.get(nutriente)
+            if configuracao is None:
+                para_criar.append(
+                    ConfiguracaoNutriente(
+                        exigencia_configurada=exigencia,
+                        nutriente=nutriente,
+                        **valores,
+                    )
+                )
+                continue
+
+            for campo, valor in valores.items():
+                setattr(configuracao, campo, valor)
+            para_atualizar.append(configuracao)
+
+        if para_atualizar:
+            ConfiguracaoNutriente.objects.bulk_update(
+                para_atualizar,
+                fields=[
+                    "operador",
+                    "valor_min",
+                    "valor_max",
+                    "valor_origem_nrc",
+                    "alterado_pelo_usuario",
+                ],
+            )
+        if para_criar:
+            ConfiguracaoNutriente.objects.bulk_create(para_criar)
+
+        ConfiguracaoNutriente.objects.filter(
+            exigencia_configurada=exigencia
+        ).exclude(nutriente__in=nutrientes_snapshot).delete()
 
     # ------------------------------------------------------------------
     # Escrita: criação a partir de ExigenciaNRC

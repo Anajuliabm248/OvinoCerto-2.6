@@ -20,6 +20,7 @@ class TipoAlerta(models.TextChoices):
     EXCESSO = "EXCESSO", "Excesso"
     SOMA    = "SOMA",    "Soma de participações fora de 100%"
     LIMITE_INGREDIENTE = "LIMITE_INGREDIENTE", "Limite de participação do ingrediente excedido"
+    CUSTO_INDISPONIVEL = "CUSTO_INDISPONIVEL", "Preço não informado para ao menos um ingrediente"
 
 
 class SeveridadeAlerta(models.TextChoices):

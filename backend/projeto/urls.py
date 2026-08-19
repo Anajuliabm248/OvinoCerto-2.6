@@ -1,4 +1,4 @@
-"""urls do projeto Django"""
+"""Reúne autenticação, recursos REST, documentação e painel administrativo."""
 
 from django.contrib import admin
 from django.urls import include, path
@@ -8,6 +8,8 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
+
+from schema_graph.views import Schema
 
 from accounts.viewsets import UsuarioViewSet, RegisterView, LoginView
 from formulacao.api.viewsets import FormulacaoViewSet
@@ -44,6 +46,9 @@ urlpatterns = [
     path('api/schema/swagger-ui/', SpectacularSwaggerView.as_view(url_name='schema'),
          name='swagger-ui'),
     path('api/schema/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
+    
+    # django_schema_graph
+    path('api/schema/graph/', Schema.as_view(), name='schema-graph'),
 ]
 
 urlpatterns += static(settings.MEDIA_URL,  document_root=settings.MEDIA_ROOT)

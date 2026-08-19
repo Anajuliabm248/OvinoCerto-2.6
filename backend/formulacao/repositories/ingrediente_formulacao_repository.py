@@ -20,7 +20,8 @@ from formulacao.domain.nutrientes import NUTRIENTES_ORDEM, Nutriente
 from formulacao.domain.participacao import OrigemParticipacao, ParticipacaoVetor
 from formulacao.domain.vetor_nutricional import VetorNutricional
 from formulacao.engines.motor_recalculo import SaidaRecalculo
-from formulacao.models import IngredienteFormulacao, OrigemParticipacaoChoices
+from formulacao.engines.motor_custo import SaidaCusto
+from formulacao.models import Formulacao, IngredienteFormulacao, OrigemParticipacaoChoices
 
 
 # Mapeamento entre o enum de domínio e o TextChoices do model.
@@ -35,6 +36,7 @@ _ORIGEM_DB_PARA_DOMINIO: dict[str, OrigemParticipacao] = {
 
 
 class IngredienteFormulacaoRepository:
+    """Mantém a ordem dos ingredientes ao traduzir ORM, vetores e resultados."""
 
     
     # Leitura: DB → Domínio
@@ -145,6 +147,106 @@ class IngredienteFormulacaoRepository:
             })
         return resultado
 
+    @staticmethod
+    def get_nomes_e_ids(formulacao_id: int) -> tuple[list[str], list[int | None]]:
+        """
+        Retorna (nomes, ingrediente_ids), na MESMA ordem de
+        get_participacao()/get_dados_custo() — usado pelo
+        MotorViabilidade para rotular cada linha do Quadro 11.
+
+        Ingrediente removido (SET_NULL): nome="(removido)", id=None.
+        """
+        qs = (
+            IngredienteFormulacao.objects
+            .filter(formulacao_id=formulacao_id)
+            .order_by("id")
+            .select_related("ingrediente")
+        )
+        nomes: list[str] = []
+        ids: list[int | None] = []
+        for ing_form in qs:
+            ing = ing_form.ingrediente
+            nomes.append(ing.nome if ing else "(removido)")
+            ids.append(ing.id if ing else None)
+        return nomes, ids
+
+    @staticmethod
+    def get_dados_custo(formulacao_id: int) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Retorna (custos_kg_mn, ms_percentuais), ambos na MESMA ordem
+        de get_participacao() — essencial para o alinhamento posicional
+        que o MotorCusto espera em EntradaCusto.
+
+        Resolução de precedência do preço (ÚNICO ponto do sistema onde
+        isso acontece):
+          1. IngredienteFormulacao.custo_kg_mn_override, se definido
+             (usuário escolheu "atualizar só nesta receita").
+          2. PrecoIngredienteUsuario do DONO da formulação para este
+             ingrediente — o "banco de preços regional" do usuário
+             (requisito #1 da Fase 2). NÃO usa Ingrediente.custo_kg:
+             esse campo é compartilhado por todos os usuários do
+             catálogo Valadares, então gravar preço ali vazaria entre
+             contas diferentes (ver docstring de PrecoIngredienteUsuario
+             em ingrediente/models.py).
+          3. 0.0 — tratado como "sem preço informado" pelo MotorCusto
+             (não gera ZeroDivisionError, apenas custo 0 e a flag
+             tem_ingrediente_sem_preco=True na saída).
+
+        ms_percentuais vem de Ingrediente.ms, usado pelo MotorCusto para
+        converter custo por kg de MN em custo por kg de MS. Ingrediente
+        removido (SET_NULL) entra com custo 0.0 e ms 0.0 — mesmo
+        tratamento dado em get_vetores_nutricionais.
+        """
+        from ingrediente.models import PrecoIngredienteUsuario
+
+        usuario_id = (
+            Formulacao.objects
+            .values_list("usuario_id", flat=True)
+            .get(id=formulacao_id)
+        )
+
+        linhas = list(
+            IngredienteFormulacao.objects
+            .filter(formulacao_id=formulacao_id)
+            .order_by("id")
+            .select_related("ingrediente")
+        )
+
+        ids_ingredientes = [l.ingrediente_id for l in linhas if l.ingrediente_id]
+        precos_usuario = dict(
+            PrecoIngredienteUsuario.objects
+            .filter(usuario_id=usuario_id, ingrediente_id__in=ids_ingredientes)
+            .values_list("ingrediente_id", "preco_kg_mn")
+        )
+
+        custos: list[float] = []
+        ms_percentuais: list[float] = []
+        for ing_form in linhas:
+            ing = ing_form.ingrediente
+            if ing_form.custo_kg_mn_override is not None:
+                custo = float(ing_form.custo_kg_mn_override)
+            elif ing is not None and ing.id in precos_usuario:
+                custo = float(precos_usuario[ing.id])
+            else:
+                custo = 0.0
+            custos.append(custo)
+            ms_percentuais.append(float(ing.ms) if ing is not None else 0.0)
+
+        return (
+            np.array(custos, dtype=float),
+            np.array(ms_percentuais, dtype=float),
+        )
+
+    @staticmethod
+    def get_num_animais(formulacao_id: int) -> int:
+        """Número de animais do lote associado — usado para custo_lote_dia."""
+        return (
+            Formulacao.objects
+            .select_related("lote")
+            .values_list("lote__num_animais", flat=True)
+            .get(id=formulacao_id)
+        )
+
     
     # Escrita: Domínio → DB
     
@@ -221,6 +323,49 @@ class IngredienteFormulacaoRepository:
                     "ee_kg", "ca_kg", "p_kg",
                 ],
             )
+
+    @staticmethod
+    @transaction.atomic
+    def salvar_saida_custo(
+        formulacao_id: int,
+        ids_ingredientes: tuple[int, ...],
+        saida: SaidaCusto,
+    ) -> None:
+        """
+        Persiste os campos calculados pelo MotorCusto: custo_dia por
+        IngredienteFormulacao + os 4 indicadores-resumo em Formulacao.
+
+        `ids_ingredientes` deve ser EXATAMENTE participacao.ids_ingredientes
+        usada para montar a EntradaCusto — a correspondência com
+        saida.custo_por_ingrediente_dia é posicional, igual ao padrão de
+        salvar_saida_recalculo.
+        """
+        if ids_ingredientes:
+            qs = {
+                obj.id: obj
+                for obj in IngredienteFormulacao.objects.filter(
+                    id__in=ids_ingredientes, formulacao_id=formulacao_id
+                )
+            }
+            para_atualizar = []
+            for pos, ing_form_id in enumerate(ids_ingredientes):
+                obj = qs.get(ing_form_id)
+                if obj is None:
+                    continue
+                obj.custo_dia = float(saida.custo_por_ingrediente_dia[pos])
+                para_atualizar.append(obj)
+
+            if para_atualizar:
+                IngredienteFormulacao.objects.bulk_update(
+                    para_atualizar, fields=["custo_dia"]
+                )
+
+        Formulacao.objects.filter(id=formulacao_id).update(
+            custo_mn_kg=saida.custo_mn_kg,
+            custo_ms_kg=saida.custo_ms_kg,
+            custo_animal_dia=saida.custo_animal_dia,
+            custo_lote_dia=saida.custo_lote_dia,
+        )
 
     @staticmethod
     def atualizar_participacao(
