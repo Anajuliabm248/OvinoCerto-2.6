@@ -51,6 +51,11 @@ class IngredienteViewSet(viewsets.ModelViewSet):
                 'Complete seu perfil antes de alterar ingredientes.'
             ) from exc
 
+    def get_serializer_class(self):
+        if self.action == 'preco':
+            return AtualizarPrecoCatalogoInputSerializer
+        return super().get_serializer_class()
+
     # Queryset: Valadares (públicos) + ingredientes do usuário logado
     def get_queryset(self):
         """Lista itens públicos e customizados do usuário, aplicando os filtros."""
@@ -190,6 +195,7 @@ class IngredienteViewSet(viewsets.ModelViewSet):
             'classificacoes': [{'value': v, 'label': l} for v, l in CLASSIFICACAO_CHOICES],
             'tipos':          [{'value': v, 'label': l} for v, l in TIPO_CHOICES],
         })
+
     # PATCH /api/ingredientes/{id}/preco/
     @action(detail=True, methods=['patch'], url_path='preco')
     def preco(self, request, pk=None):

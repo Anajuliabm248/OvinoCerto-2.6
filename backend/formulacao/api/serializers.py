@@ -247,14 +247,14 @@ class AtualizarExigenciaInputSerializer(serializers.Serializer):
         required=False,
         allow_null=True,
         label="Valor",
-        help_text="Use para os operadores '=', '>=' e '<='.",
+        help_text="Use para o operadores '='.",
         style={"base_template": "input.html"},
     )
     valor_min = serializers.FloatField(
         required=False,
         allow_null=True,
         label="Valor mínimo",
-        help_text="Use para o operador 'ENTRE'.",
+        help_text="Use para os operadores 'ENTRE' e '>='.",
         style={"base_template": "input.html"},
     )
     valor_max = serializers.FloatField(

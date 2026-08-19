@@ -1,20 +1,20 @@
 """
 Application Service - AdicionarIngredienteService.
 
-Adiciona um novo ingrediente a uma formulação existente e dispara
-a redistribuição automática de %MS entre os ingredientes livres
-(seção 11 do documento de arquitetura).
+Adiciona um novo ingrediente a uma formulação existente. Em formulações
+já geradas, dispara a redistribuição automática de %MS entre os
+ingredientes livres (seção 11 do documento de arquitetura).
 
 Fluxo:
   1. Valida que o ingrediente existe e ainda não está na formulação.
   2. Cria IngredienteFormulacao com ms_porcent=0, CALCULADA.
-  3. Recarrega participação completa (agora incluindo o novo, com
-     fração 0 — entra como ingrediente livre).
-  4. Chama MotorAdequacao.redistribuir() sobre os livres.
+  3. Se for RASCUNHO, registra a seleção e aguarda a geração inicial.
+  4. Em formulações já geradas, recarrega a participação completa e chama
+     MotorAdequacao.redistribuir() sobre os ingredientes livres.
   5. Aplica as novas frações (apenas dos ingredientes CALCULADA;
      os MANUAL_TRAVADA permanecem intocados).
-  6. Registra evento INGREDIENTE_ADICIONADO.
-  7. Dispara RecalcularFormulacaoService (nutrientes + alertas + snapshot).
+  6. Registra evento INGREDIENTE_ADICIONADO e dispara
+     RecalcularFormulacaoService (nutrientes + alertas + snapshot).
 
 Metas nutricionais não atendidas geram alertas. Incompatibilidades
 estruturais (soma e limites de participação) rejeitam toda a operação;
@@ -31,6 +31,7 @@ from formulacao.models import (
     Formulacao,
     IngredienteFormulacao,
     OrigemParticipacaoChoices,
+    StatusFormulacao,
     TipoEvento,
 )
 from formulacao.repositories import (
@@ -44,7 +45,7 @@ from ingrediente.models import Ingrediente
 
 
 class AdicionarIngredienteService:
-    """Inclui um ingrediente e redistribui as linhas livres para manter 100%."""
+    """Inclui ingrediente; redistribui somente formulações já geradas."""
 
     @staticmethod
     @transaction.atomic
@@ -72,6 +73,8 @@ class AdicionarIngredienteService:
         except Ingrediente.DoesNotExist:
             raise ValueError(f"Ingrediente {ingrediente_id} não encontrado.")
 
+        formulacao = Formulacao.objects.get(pk=formulacao_id)
+
         # ------------------------------------------------------------------
         # Criar o registro com participação zero, livre
         # ------------------------------------------------------------------
@@ -81,6 +84,22 @@ class AdicionarIngredienteService:
             ms_porcent=0.0,
             origem_participacao=OrigemParticipacaoChoices.CALCULADA,
         )
+
+        # Durante a montagem do rascunho os ingredientes ainda não formam
+        # uma dieta. Portanto, não há distribuição de 100% nem alvo rígido
+        # de volumoso a validar; isso ocorre exclusivamente na geração inicial.
+        if formulacao.status == StatusFormulacao.RASCUNHO:
+            EventoRepository.registrar(
+                formulacao_id=formulacao_id,
+                tipo_evento=TipoEvento.INGREDIENTE_ADICIONADO,
+                payload={
+                    "ingrediente_id": ingrediente_id,
+                    "ingrediente_nome": ingrediente.nome,
+                    "geracao_inicial_pendente": True,
+                },
+                usuario_id=usuario_id,
+            )
+            return novo
 
         # ------------------------------------------------------------------
         # Recarregar estado completo (agora com o novo ingrediente)
