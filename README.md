@@ -95,10 +95,11 @@ Os apps do backend têm responsabilidades bem separadas:
 - Fluxograma de navegação
 
 
-📂 [diagramas](diagramas)  
-    ├── 📄 [diagrama_classe.png](diagramas/diagrama_classe.png)  
-    └── 📄 [fluxo_navegacao.pdf](diagramas/fluxo_navegacao.png)  
+📂 [docs](docs)  
+    ├── 📄 [diagrama_classe.png](docs/diagrama_classe.png)  
+    └── 📄 [fluxo_navegacao.pdf](docs/fluxo_navegacao.png)  
 
+*Em constante atualização***
 
 ## API e documentação interativa
 
