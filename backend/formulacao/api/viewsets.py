@@ -103,6 +103,15 @@ _INPUT_SERIALIZER_MAP = {
 }
 
 
+# Os Quadros 12, 13 e 14 projetam preço de venda e retorno econômico do
+# ganho de peso. Esse cenário foi definido apenas para exigências de
+# cordeiros; a categoria deve vir da exigência selecionada, não do lote.
+_CATEGORIAS_CORDEIRO = frozenset({
+    "cordeiros_4_meses",
+    "cordeiros_8_meses",
+})
+
+
 class FormulacaoViewSet(viewsets.ModelViewSet):
     """
     ViewSet central de formulação.
@@ -673,6 +682,9 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
         informado, retorna 400 apontando para o PATCH de parâmetros.
         """
         formulacao = self._get_formulacao(request, pk)
+        erro = self._erro_viabilidade_economica(formulacao)
+        if erro:
+            return Response({"detail": erro}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             saida = CalcularViabilidadeService.executar(int(pk))
@@ -718,7 +730,10 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
         Índices Zootécnicos e preco_venda_kg_pv
         partial update, só os campos enviados são alterados.
         """
-        self._get_formulacao(request, pk)
+        formulacao = self._get_formulacao(request, pk)
+        erro = self._erro_viabilidade_economica(formulacao)
+        if erro:
+            return Response({"detail": erro}, status=status.HTTP_400_BAD_REQUEST)
 
         ser = self.get_serializer(data=request.data)
         ser.is_valid(raise_exception=True)
@@ -877,6 +892,25 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
 
     def _get_formulacao(self, request, pk):
         return get_object_or_404(self._qs_do_usuario(request), pk=pk)
+
+    @staticmethod
+    def _erro_viabilidade_economica(formulacao):
+        """Restringe os Quadros 12, 13 e 14 às exigências de cordeiros."""
+        try:
+            exigencia = formulacao.exigencia_configurada
+        except ObjectDoesNotExist:
+            return (
+                "A viabilidade econômica (Quadros 12, 13 e 14) exige uma "
+                "exigência nutricional de cordeiro configurada."
+            )
+
+        origem = exigencia.exigencia_nrc_origem
+        if origem is None or origem.categoria not in _CATEGORIAS_CORDEIRO:
+            return (
+                "A viabilidade econômica (Quadros 7,8,9) está "
+                "disponível somente para exigências nutricionais de cordeiros."
+            )
+        return None
 
     def _get_lote(self, request, lote_id):
         qs = Lote.objects.select_related("propriedade__usuario")

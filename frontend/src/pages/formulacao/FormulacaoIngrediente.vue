@@ -27,7 +27,7 @@
             <h3>Geração de Formulações</h3>
 
             <p class="subtitle">
-              1. Escolha Ingredientes para sua formulação
+              1. Escolha Ingredientes para sua formulação, sempre adicionar os volumosos e de maior quantidade primeiro
             </p>
           </div>
 
