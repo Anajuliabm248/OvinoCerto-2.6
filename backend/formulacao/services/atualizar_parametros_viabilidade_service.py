@@ -1,7 +1,7 @@
 """
 Application Service - AtualizarParametrosViabilidadeService.
 
-Fase 2 (Custos) — edição do Quadro 10 (Índices Zootécnicos) + Quadro 13
+Fase 2 (Custos) — edição do Quadro 5 (Índices Zootécnicos) + Quadro 8
 (Valor R$/kg PV) de ParametrosViabilidade.
 
 Puramente ortogonal ao resto do sistema: nunca dispara
@@ -12,7 +12,9 @@ valores atualizados na hora, sem cache).
 
 Validação de domínio (faixas, positividade) mora aqui — o repositório
 (ParametrosViabilidadeRepository.atualizar) só valida que os NOMES de
-campo são conhecidos, não os valores.
+campo são conhecidos, não os valores. O contrato de entrada para CMS e
+perdas é percentual de 0 a 100; esta camada os converte para a fração
+de 0 a 1 persistida e consumida pelo motor.
 """
 
 from __future__ import annotations
@@ -30,6 +32,11 @@ _VALIDACOES: dict[str, tuple[str, bool]] = {
     "perdas_alimentos_percentual":   ("Perdas de alimentos (%)", True),
     "preco_venda_kg_pv":             ("Preço de venda (R$/kg PV)", False),
 }
+
+_CAMPOS_PERCENTUAIS = frozenset({
+    "cms_percentual_pv",
+    "perdas_alimentos_percentual",
+})
 
 
 class AtualizarParametrosViabilidadeService:
@@ -55,7 +62,18 @@ class AtualizarParametrosViabilidadeService:
         for campo, valor in campos.items():
             AtualizarParametrosViabilidadeService._validar_campo(campo, valor)
 
-        return ParametrosViabilidadeRepository.atualizar(formulacao_id, **campos)
+        campos_normalizados = {
+            campo: (
+                valor / 100.0
+                if campo in _CAMPOS_PERCENTUAIS and valor is not None
+                else valor
+            )
+            for campo, valor in campos.items()
+        }
+        return ParametrosViabilidadeRepository.atualizar(
+            formulacao_id,
+            **campos_normalizados,
+        )
 
     @staticmethod
     def _validar_campo(campo: str, valor) -> None:
@@ -68,5 +86,7 @@ class AtualizarParametrosViabilidadeService:
 
         if valor < 0:
             raise ValueError(f"{rotulo} não pode ser negativo.")
+        if campo in _CAMPOS_PERCENTUAIS and valor > 100:
+            raise ValueError(f"{rotulo} deve estar entre 0 e 100.")
         if not permite_zero and valor == 0:
             raise ValueError(f"{rotulo} deve ser maior que zero.")

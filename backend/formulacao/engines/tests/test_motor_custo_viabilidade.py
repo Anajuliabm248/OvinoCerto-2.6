@@ -63,3 +63,23 @@ def test_motor_viabilidade_rejeita_vetores_desalinhados():
             ['Silagem'],
             [1],
         )
+
+
+def test_motor_viabilidade_calcula_indices_e_custos_sem_quadros_economicos():
+    """Quadros 10 e 11 não dependem do preço de venda de peso vivo."""
+    parametros = ParametrosViabilidade(1, 0.2, 10, 20.0, 0.03, 0.1, None)
+
+    saida = MotorViabilidade.calcular(
+        parametros,
+        np.array([1.0]),
+        np.array([50.0]),
+        np.array([2.0]),
+        ["Silagem"],
+        [1],
+    )
+
+    assert saida.indices.cms_kg_dia == pytest.approx(0.63)
+    assert len(saida.linhas_custo) == 1
+    assert saida.preco_minimo_kg_pv is None
+    assert saida.resultado_animal is None
+    assert saida.resultado_lote is None

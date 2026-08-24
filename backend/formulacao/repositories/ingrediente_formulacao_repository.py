@@ -152,7 +152,7 @@ class IngredienteFormulacaoRepository:
         """
         Retorna (nomes, ingrediente_ids), na MESMA ordem de
         get_participacao()/get_dados_custo() — usado pelo
-        MotorViabilidade para rotular cada linha do Quadro 11.
+        MotorViabilidade para rotular cada linha do Quadro 6.
 
         Ingrediente removido (SET_NULL): nome="(removido)", id=None.
         """

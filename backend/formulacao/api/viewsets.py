@@ -50,11 +50,16 @@ from formulacao.api.serializers import (
     IngredienteDisponivelSerializer,
     IngredienteFormulacaoSerializer,
     IniciarFormulacaoInputSerializer,
+    ParametrosViabilidadeBasicosSerializer,
     ParametrosViabilidadeSerializer,
     ResultadoAdequacaoOutputSerializer,
     SnapshotDetailSerializer,
     SnapshotListSerializer,
     SugestaoIngredienteSerializer,
+    ViabilidadeConfiguracaoPendenteOutputSerializer,
+    ViabilidadeCordeiroOutputSerializer,
+    ViabilidadeCordeiroConfiguracaoPendenteOutputSerializer,
+    ViabilidadeEconomicaOutputSerializer,
     ViabilidadeOutputSerializer,
 )
 from formulacao.models import Formulacao
@@ -669,7 +674,7 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
         return Response(CustoFormulacaoOutputSerializer(payload).data)
 
     # ------------------------------------------------------------------
-    # Viabilidade (Quadros 9-14)
+    # Viabilidade (Quadros 4-9)
     # ------------------------------------------------------------------
 
     @action(detail=True, methods=["get"], url_path="viabilidade")
@@ -677,31 +682,40 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
         """
         GET /formulacoes/{id}/viabilidade/
 
-        Custos e Viabilidade da Dieta
-        Requer `preco_venda_kg_pv` já definido, se ainda não foi
-        informado, retorna 400 apontando para o PATCH de parâmetros.
+        Retorna os Quadros 5 e 6 para qualquer categoria de ovinos.
+        O Quadro 8 é um campo de entrada exclusivo de cordeiros. Após
+        ele ser preenchido, os Quadros 7 e 9 também são incluídos.
         """
         formulacao = self._get_formulacao(request, pk)
-        erro = self._erro_viabilidade_economica(formulacao)
-        if erro:
-            return Response({"detail": erro}, status=status.HTTP_400_BAD_REQUEST)
+        exigencia_eh_cordeiro = self._exigencia_eh_cordeiro(formulacao)
+        contexto = ParametrosViabilidadeRepository.obter_contexto(int(pk))
+        parametros = ParametrosViabilidadeRepository.get_ou_criar_default(int(pk))
+        dados_animal = self._dados_animal_viabilidade(contexto)
+        campos_pendentes = self._campos_pendentes_viabilidade(parametros)
+        if campos_pendentes:
+            payload = {
+                "dados_animal": dados_animal,
+                "parametros": parametros,
+                "configuracao_pendente": True,
+                "campos_pendentes": campos_pendentes,
+            }
+            serializer = (
+                ViabilidadeCordeiroConfiguracaoPendenteOutputSerializer
+                if exigencia_eh_cordeiro
+                else ViabilidadeConfiguracaoPendenteOutputSerializer
+            )
+            return Response(serializer(payload).data)
 
         try:
-            saida = CalcularViabilidadeService.executar(int(pk))
+            saida = CalcularViabilidadeService.executar(
+                int(pk),
+                incluir_quadros_economicos=exigencia_eh_cordeiro,
+            )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
-        parametros = ParametrosViabilidadeRepository.get_ou_criar_default(int(pk))
-        lote = formulacao.lote
-
         payload = {
-            "dados_animal": {
-                "especie":      "Ovino",
-                "raca":         lote.raca,
-                "sistema":      lote.sistema,
-                "categoria":    lote.get_categoria_display(),
-                "peso_vivo_kg": lote.peso_vivo,
-            },
+            "dados_animal": dados_animal,
             "parametros":   parametros,
             "indices":      saida.indices,
             "linhas_custo": saida.linhas_custo,
@@ -712,11 +726,19 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
             "investimento_total_geral":    saida.investimento_total_geral,
             "custo_por_animal_total":      saida.custo_por_animal_total,
             "custo_por_animal_dia_total":  saida.custo_por_animal_dia_total,
-            "preco_minimo_kg_pv":          saida.preco_minimo_kg_pv,
-            "resultado_animal": saida.resultado_animal,
-            "resultado_lote":   saida.resultado_lote,
         }
-        return Response(ViabilidadeOutputSerializer(payload).data)
+        if exigencia_eh_cordeiro and parametros.preco_venda_kg_pv is not None:
+            payload.update({
+                "preco_minimo_kg_pv": saida.preco_minimo_kg_pv,
+                "resultado_animal": saida.resultado_animal,
+                "resultado_lote": saida.resultado_lote,
+            })
+            serializer = ViabilidadeEconomicaOutputSerializer
+        elif exigencia_eh_cordeiro:
+            serializer = ViabilidadeCordeiroOutputSerializer
+        else:
+            serializer = ViabilidadeOutputSerializer
+        return Response(serializer(payload).data)
 
     @action(
         detail=True,
@@ -727,26 +749,34 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
         """
         PATCH /formulacoes/{id}/viabilidade/parametros/
 
-        Índices Zootécnicos e preco_venda_kg_pv
-        partial update, só os campos enviados são alterados.
+        Índices Zootécnicos para todos os ovinos. `preco_venda_kg_pv`
+        é exclusivo das exigências de cordeiros.
         """
         formulacao = self._get_formulacao(request, pk)
-        erro = self._erro_viabilidade_economica(formulacao)
-        if erro:
-            return Response({"detail": erro}, status=status.HTTP_400_BAD_REQUEST)
 
         ser = self.get_serializer(data=request.data)
         ser.is_valid(raise_exception=True)
+        exigencia_eh_cordeiro = self._exigencia_eh_cordeiro(formulacao)
+        campos = dict(ser.validated_data)
+        if not exigencia_eh_cordeiro:
+            # O mesmo formulário pode enviar este campo já preenchido por uma
+            # configuração anterior. Fora de cordeiros ele não participa de
+            # nenhum quadro e não deve impedir a gravação dos índices.
+            campos.pop("preco_venda_kg_pv", None)
 
         try:
             parametros = AtualizarParametrosViabilidadeService.executar(
                 formulacao_id=int(pk),
-                **ser.validated_data,
+                **campos,
             )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
-        return Response(ParametrosViabilidadeSerializer(parametros).data)
+        serializer = (
+            ParametrosViabilidadeSerializer
+            if exigencia_eh_cordeiro else ParametrosViabilidadeBasicosSerializer
+        )
+        return Response(serializer(parametros).data)
 
     # ------------------------------------------------------------------
     # Sugestões de ingredientes
@@ -894,23 +924,40 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
         return get_object_or_404(self._qs_do_usuario(request), pk=pk)
 
     @staticmethod
-    def _erro_viabilidade_economica(formulacao):
-        """Restringe os Quadros 12, 13 e 14 às exigências de cordeiros."""
+    def _exigencia_eh_cordeiro(formulacao):
+        """Identifica se os Quadros 12, 13 e 14 podem ser apresentados."""
         try:
             exigencia = formulacao.exigencia_configurada
         except ObjectDoesNotExist:
-            return (
-                "A viabilidade econômica (Quadros 12, 13 e 14) exige uma "
-                "exigência nutricional de cordeiro configurada."
-            )
+            return False
 
         origem = exigencia.exigencia_nrc_origem
-        if origem is None or origem.categoria not in _CATEGORIAS_CORDEIRO:
-            return (
-                "A viabilidade econômica (Quadros 7,8,9) está "
-                "disponível somente para exigências nutricionais de cordeiros."
-            )
-        return None
+        return origem is not None and origem.categoria in _CATEGORIAS_CORDEIRO
+
+    @staticmethod
+    def _dados_animal_viabilidade(contexto):
+        """Expõe o lote ou a exigência que de fato inicializou o cenário."""
+        return {
+            "especie": "Ovino",
+            "raca": contexto.raca,
+            "sistema": contexto.sistema,
+            "categoria": contexto.categoria_display,
+            "peso_vivo_kg": contexto.peso_vivo_kg,
+        }
+
+    @staticmethod
+    def _campos_pendentes_viabilidade(parametros):
+        """Impede cálculos com os zeros usados como preenchimento inicial."""
+        campos = []
+        if parametros.num_animais <= 0:
+            campos.append("num_animais")
+        if parametros.estimativa_permanencia_dias <= 0:
+            campos.append("estimativa_permanencia_dias")
+        if parametros.peso_entrada_kg <= 0:
+            campos.append("peso_entrada_kg")
+        if parametros.cms_percentual_pv <= 0:
+            campos.append("cms_percentual_pv")
+        return campos
 
     def _get_lote(self, request, lote_id):
         qs = Lote.objects.select_related("propriedade__usuario")

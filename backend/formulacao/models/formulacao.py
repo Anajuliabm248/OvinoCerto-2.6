@@ -68,7 +68,8 @@ class Formulacao(models.Model):
         verbose_name="Alvo de volumosos (fração da MS)",
         help_text=(
             "Participação total rígida de ingredientes classificados como "
-            "volumoso, armazenada como fração de 0 a 1."
+            "volumoso, armazenada como fração de 0 a 1; a API recebe e "
+            "devolve percentual de 0 a 100."
         ),
     )
     dt_inc = models.DateTimeField(auto_now_add=True, verbose_name="Criado em")

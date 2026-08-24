@@ -164,8 +164,8 @@ class GerarFormulacaoInicialInputSerializer(serializers.Serializer):
         max_value=100.0,
         label="Alvo de volumosos (%)",
         help_text=(
-            "Aceita fração (0,50) ou percentual (50). Se omitido, preserva "
-            "o alvo já configurado na formulação (50% na primeira geração)."
+            "Informe o percentual de 0 a 100. Se omitido, preserva o alvo "
+            "já configurado na formulação (50% na primeira geração)."
         ),
         style={"base_template": "input.html"},
     )
@@ -195,13 +195,10 @@ class GerarFormulacaoInicialInputSerializer(serializers.Serializer):
 
     def validate_percentual_alvo_volumoso(self, value: float) -> float:
         """
-        Normaliza a entrada para fracao 0-1.
-
-        O front ja enviou esse campo em formatos diferentes ao longo do
-        projeto: 0.20 e 20 devem significar o mesmo alvo de 20%.
+        Normaliza o percentual público de 0-100 para a fração interna 0-1.
         """
         valor = float(value)
-        return valor / 100.0 if valor > 1.0 else valor
+        return valor / 100.0
 
 
 class AtualizarPercentualVolumosoInputSerializer(serializers.Serializer):
@@ -211,13 +208,13 @@ class AtualizarPercentualVolumosoInputSerializer(serializers.Serializer):
         min_value=0.0,
         max_value=100.0,
         label="Alvo de volumosos (%)",
-        help_text="Aceita fração (0,50) ou percentual (50).",
+        help_text="Informe o percentual de 0 a 100.",
         style={"base_template": "input.html"},
     )
 
     def validate_percentual_alvo_volumoso(self, value: float) -> float:
         valor = float(value)
-        return valor / 100.0 if valor > 1.0 else valor
+        return valor / 100.0
 
 # ---------------------------------------------------------------------------
 # Exigência configurada
@@ -396,7 +393,21 @@ class SugestaoIngredienteSerializer(serializers.Serializer):
 # Formulação
 # ---------------------------------------------------------------------------
 
-class FormulacaoListSerializer(serializers.ModelSerializer):
+class _PercentualAlvoVolumosoOutputMixin:
+    """Converte o alvo interno em fração para percentual no contrato HTTP."""
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        valor = data.get("percentual_alvo_volumoso")
+        if valor is not None:
+            data["percentual_alvo_volumoso"] = float(valor) * 100.0
+        return data
+
+
+class FormulacaoListSerializer(
+    _PercentualAlvoVolumosoOutputMixin,
+    serializers.ModelSerializer,
+):
     """Entrega os dados compactos usados na listagem de formulações."""
     lote_nome = serializers.CharField(source="lote.nome_lote", read_only=True)
 
@@ -410,7 +421,10 @@ class FormulacaoListSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class FormulacaoDetailSerializer(serializers.ModelSerializer):
+class FormulacaoDetailSerializer(
+    _PercentualAlvoVolumosoOutputMixin,
+    serializers.ModelSerializer,
+):
     """Monta a receita completa com exigências e ingredientes atuais."""
     lote_nome    = serializers.CharField(source="lote.nome_lote",   read_only=True)
     exigencias   = serializers.SerializerMethodField()
@@ -496,12 +510,12 @@ class DadosAnimalOutputSerializer(serializers.Serializer):
     peso_vivo_kg = serializers.FloatField()
 
 
-class ParametrosViabilidadeSerializer(serializers.ModelSerializer):
+class ParametrosViabilidadeBasicosSerializer(serializers.ModelSerializer):
     """
-    Índices Zootécnicos + Valor R$/kg PV.
+    Índices Zootécnicos (Quadro 5), disponíveis para todas as categorias.
 
-    Usado como saída de leitura (embutido em ViabilidadeOutputSerializer)
-    e como saída de escrita (retorno de PATCH .../viabilidade/parametros/).
+    O preço de venda integra somente a versão econômica dos parâmetros,
+    apresentada para exigências de cordeiros.
     """
     class Meta:
         """Protege o vínculo com a formulação e as datas de auditoria."""
@@ -513,10 +527,33 @@ class ParametrosViabilidadeSerializer(serializers.ModelSerializer):
             "peso_entrada_kg",
             "cms_percentual_pv",
             "perdas_alimentos_percentual",
-            "preco_venda_kg_pv",
             "dt_alteracao",
         ]
         read_only_fields = ["dt_alteracao"]
+
+    def to_representation(self, instance):
+        """Expõe percentuais no contrato HTTP em escala humana de 0 a 100."""
+        data = super().to_representation(instance)
+        for campo in ("cms_percentual_pv", "perdas_alimentos_percentual"):
+            if data.get(campo) is not None:
+                data[campo] = float(data[campo]) * 100.0
+        return data
+
+
+class ParametrosViabilidadeSerializer(ParametrosViabilidadeBasicosSerializer):
+    """Quadros 10 e 13, disponíveis quando a exigência é de cordeiro."""
+
+    class Meta(ParametrosViabilidadeBasicosSerializer.Meta):
+        fields = [
+            "num_animais",
+            "gmd_esperado_kg",
+            "estimativa_permanencia_dias",
+            "peso_entrada_kg",
+            "cms_percentual_pv",
+            "perdas_alimentos_percentual",
+            "preco_venda_kg_pv",
+            "dt_alteracao",
+        ]
 
 
 class AtualizarParametrosViabilidadeInputSerializer(serializers.Serializer):
@@ -546,11 +583,13 @@ class AtualizarParametrosViabilidadeInputSerializer(serializers.Serializer):
         style={"base_template": "input.html"},
     )
     cms_percentual_pv = serializers.FloatField(
-        required=False, min_value=0.0001, label="CMS (%) do peso vivo",
+        required=False, min_value=0.0, max_value=100.0,
+        label="CMS (% do peso vivo)",
         style={"base_template": "input.html"},
     )
     perdas_alimentos_percentual = serializers.FloatField(
-        required=False, min_value=0.0, label="Perdas de Alimentos (%)",
+        required=False, min_value=0.0, max_value=100.0,
+        label="Perdas de Alimentos (%)",
         style={"base_template": "input.html"},
     )
     preco_venda_kg_pv = serializers.FloatField(
@@ -559,9 +598,16 @@ class AtualizarParametrosViabilidadeInputSerializer(serializers.Serializer):
         style={"base_template": "input.html"},
     )
 
+    def to_internal_value(self, data):
+        """Trata preço vazio do formulário HTML como preço não informado."""
+        if data.get("preco_venda_kg_pv") == "":
+            data = data.copy()
+            data["preco_venda_kg_pv"] = None
+        return super().to_internal_value(data)
+
 
 class IndicesZootecnicosOutputSerializer(serializers.Serializer):
-    """Quadro 10 — parte calculada (peso saída, ganho, peso ajustado, CMS kg/dia)."""
+    """Quadro 5 — parte calculada (peso saída, ganho, peso ajustado, CMS kg/dia)."""
     peso_saida_kg    = serializers.FloatField()
     ganho_peso_kg    = serializers.FloatField()
     peso_ajustado_kg = serializers.FloatField()
@@ -569,7 +615,7 @@ class IndicesZootecnicosOutputSerializer(serializers.Serializer):
 
 
 class LinhaCustoViabilidadeOutputSerializer(serializers.Serializer):
-    """Quadro 11 — uma linha (um ingrediente)."""
+    """Quadro 6 — uma linha (um ingrediente)."""
     ingrediente_id              = serializers.IntegerField(allow_null=True)
     nome                        = serializers.CharField()
     participacao_mn_percentual  = serializers.FloatField()
@@ -584,7 +630,7 @@ class LinhaCustoViabilidadeOutputSerializer(serializers.Serializer):
 
 
 class ResultadoEconomicoOutputSerializer(serializers.Serializer):
-    """Quadro 14 — uma linha (Animal ou Lote)."""
+    """Quadro 9 — uma linha (Animal ou Lote)."""
     renda_bruta_total    = serializers.FloatField()
     custo_total          = serializers.FloatField()
     custo_por_dia        = serializers.FloatField()
@@ -599,7 +645,7 @@ class ViabilidadeOutputSerializer(serializers.Serializer):
     Nada é persistido além de `parametros` que é input, não resultado.
     """
     dados_animal = DadosAnimalOutputSerializer()
-    parametros   = ParametrosViabilidadeSerializer()
+    parametros   = ParametrosViabilidadeBasicosSerializer()
     indices      = IndicesZootecnicosOutputSerializer()
 
     linhas_custo = LinhaCustoViabilidadeOutputSerializer(many=True)
@@ -611,9 +657,36 @@ class ViabilidadeOutputSerializer(serializers.Serializer):
     custo_por_animal_total       = serializers.FloatField()
     custo_por_animal_dia_total   = serializers.FloatField()
 
-    preco_minimo_kg_pv = serializers.FloatField()   # Quadro 12
 
-    resultado_animal = ResultadoEconomicoOutputSerializer()  # Quadro 14
+class ViabilidadeCordeiroOutputSerializer(ViabilidadeOutputSerializer):
+    """Quadros 5 e 6 de cordeiros, com o campo de entrada do Quadro 8."""
+
+    parametros = ParametrosViabilidadeSerializer()
+
+
+class ViabilidadeConfiguracaoPendenteOutputSerializer(serializers.Serializer):
+    """Resposta enquanto dados incompatíveis com o lote aguardam preenchimento."""
+
+    dados_animal = DadosAnimalOutputSerializer()
+    parametros = ParametrosViabilidadeBasicosSerializer()
+    configuracao_pendente = serializers.BooleanField()
+    campos_pendentes = serializers.ListField(child=serializers.CharField())
+
+
+class ViabilidadeCordeiroConfiguracaoPendenteOutputSerializer(
+    ViabilidadeConfiguracaoPendenteOutputSerializer
+):
+    """Inclui o campo de preço quando a exigência pendente é de cordeiro."""
+
+    parametros = ParametrosViabilidadeSerializer()
+
+
+class ViabilidadeEconomicaOutputSerializer(ViabilidadeCordeiroOutputSerializer):
+    """Resposta completa para cordeiros, incluindo os Quadros 7 a 9."""
+
+    preco_minimo_kg_pv = serializers.FloatField()   # Quadro 7
+
+    resultado_animal = ResultadoEconomicoOutputSerializer()  # Quadro 9
     resultado_lote    = ResultadoEconomicoOutputSerializer()
 
 
