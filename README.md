@@ -47,15 +47,9 @@ O **OvinoCerto** é uma aplicação web voltada para a otimização e automatiza
 
 ## Regras importantes da formulação
 
-- `ms_porcent` é salvo no banco em percentual de `0` a `100`.
-- Os motores trabalham com frações de `0` a `1`.
-- A soma das participações deve terminar em `1.0`, isto é, 100% da MS.
 - O percentual de volumoso informado é um alvo estrutural rígido.
 - Limites máximos por ingrediente são rígidos na geração e na redistribuição.
 - Participações `MANUAL_TRAVADA` não são alteradas automaticamente.
-- Exigências nutricionais são atendidas por melhor esforço. Se a seleção de
-  ingredientes não permitir atendê-las, a estrutura da dieta continua válida e
-  os desvios aparecem como alertas.
 - O preço regional pertence ao usuário. Um preço local da receita não altera o
   catálogo nem outras formulações.
 - Parâmetros de viabilidade são uma cópia de simulação: editá-los não altera o
