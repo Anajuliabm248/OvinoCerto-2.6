@@ -40,6 +40,7 @@ from formulacao.repositories import (
     IngredienteFormulacaoRepository,
 )
 from formulacao.services._configuracao_ingrediente import configuracao_a_partir_do_ingrediente
+from formulacao.services._percentual_volumoso import obter_alvo_volumoso_para_motor
 from formulacao.services.recalcular_formulacao_service import RecalcularFormulacaoService
 from ingrediente.models import Ingrediente
 
@@ -135,9 +136,7 @@ class AdicionarIngredienteService:
             requisitos=requisitos,
             participacao_atual=participacao,
             configuracoes=configuracoes,
-            percentual_alvo_volumoso=Formulacao.objects.values_list(
-                "percentual_alvo_volumoso", flat=True
-            ).get(pk=formulacao_id),
+            percentual_alvo_volumoso=obter_alvo_volumoso_para_motor(formulacao_id),
         )
 
         # ------------------------------------------------------------------

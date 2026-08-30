@@ -30,7 +30,9 @@ from django.db import transaction
 from formulacao.models import (
     Formulacao,
     IngredienteFormulacao,
+    ModoPercentualVolumoso,
     OrigemParticipacaoChoices,
+    OrigemPercentualVolumoso,
     TipoEvento,
 )
 from formulacao.repositories import (
@@ -74,21 +76,11 @@ class RestaurarVersaoService:
             formulacao_id=formulacao_id,
             configuracao_snapshot=snapshot.payload.get("exigencia_configurada"),
         )
-        percentual_alvo_volumoso = snapshot.payload.get("percentual_alvo_volumoso")
-        if percentual_alvo_volumoso is not None:
-            try:
-                percentual_alvo_volumoso = float(percentual_alvo_volumoso)
-            except (TypeError, ValueError):
-                raise ValueError(
-                    "A versão selecionada contém percentual de volumoso inválido."
-                ) from None
-            if not 0.0 <= percentual_alvo_volumoso <= 1.0:
-                raise ValueError(
-                    "A versão selecionada contém percentual de volumoso inválido."
-                )
-            Formulacao.objects.filter(pk=formulacao_id).update(
-                percentual_alvo_volumoso=percentual_alvo_volumoso
-            )
+        estado_volumoso = _estado_volumoso_do_snapshot(
+            payload=snapshot.payload,
+            formulacao=Formulacao.objects.get(pk=formulacao_id),
+        )
+        Formulacao.objects.filter(pk=formulacao_id).update(**estado_volumoso)
 
         # 3. Monta mapa {ing_form_id: (fracao, origem)}
         snap_map: dict[int, tuple[float, str]] = {
@@ -142,7 +134,18 @@ class RestaurarVersaoService:
                 "acao": "restaurar_versao",
                 "versao_restaurada": versao_num,
                 "exigencias_restauradas": True,
-                "percentual_alvo_volumoso_restaurado": percentual_alvo_volumoso,
+                "modo_percentual_volumoso_restaurado": estado_volumoso[
+                    "modo_percentual_volumoso"
+                ],
+                "percentual_alvo_volumoso_restaurado": estado_volumoso[
+                    "percentual_alvo_volumoso"
+                ],
+                "percentual_volumoso_aplicado_restaurado": estado_volumoso[
+                    "percentual_volumoso_aplicado"
+                ],
+                "origem_percentual_volumoso_restaurada": estado_volumoso[
+                    "origem_percentual_volumoso"
+                ],
                 "ids_ausentes": list(ids_ausentes),
                 "ids_removidos": list(ids_remover),
             },
@@ -163,3 +166,62 @@ def _mapear_origem(origem_str: str) -> str:
         "MANUAL_TRAVADA": OrigemParticipacaoChoices.MANUAL_TRAVADA,
     }
     return mapa.get(origem_str, OrigemParticipacaoChoices.CALCULADA)
+
+
+def _estado_volumoso_do_snapshot(payload: dict, formulacao: Formulacao) -> dict:
+    """Le schema v4 e preserva a semantica fixa de snapshots v3."""
+    if "modo_percentual_volumoso" not in payload:
+        if "percentual_alvo_volumoso" not in payload:
+            return {
+                "modo_percentual_volumoso": formulacao.modo_percentual_volumoso,
+                "percentual_alvo_volumoso": formulacao.percentual_alvo_volumoso,
+                "percentual_volumoso_aplicado": formulacao.percentual_volumoso_aplicado,
+                "origem_percentual_volumoso": formulacao.origem_percentual_volumoso,
+            }
+        modo = ModoPercentualVolumoso.FIXADO_PELO_USUARIO
+        origem = OrigemPercentualVolumoso.USUARIO
+        aplicado_bruto = payload.get("percentual_alvo_volumoso")
+    else:
+        modo = payload.get("modo_percentual_volumoso")
+        origem = payload.get("origem_percentual_volumoso")
+        aplicado_bruto = payload.get("percentual_volumoso_aplicado")
+
+    if modo not in ModoPercentualVolumoso.values:
+        raise ValueError("A versao selecionada contem modo de volumoso invalido.")
+    origem_esperada = (
+        OrigemPercentualVolumoso.USUARIO
+        if modo == ModoPercentualVolumoso.FIXADO_PELO_USUARIO
+        else OrigemPercentualVolumoso.SISTEMA
+    )
+    if origem != origem_esperada:
+        raise ValueError("A versao selecionada contem origem de volumoso inconsistente.")
+
+    alvo_bruto = payload.get("percentual_alvo_volumoso")
+    alvo = _fracao_snapshot(alvo_bruto, "percentual alvo", permitir_nulo=True)
+    aplicado = _fracao_snapshot(
+        aplicado_bruto,
+        "percentual aplicado",
+        permitir_nulo=False,
+    )
+    if modo == ModoPercentualVolumoso.FIXADO_PELO_USUARIO and alvo is None:
+        raise ValueError("A versao fixada nao contem percentual alvo de volumoso.")
+    if modo == ModoPercentualVolumoso.OTIMIZADO_PELO_SISTEMA and alvo is not None:
+        raise ValueError("A versao automatica contem alvo fixo conflitante.")
+    return {
+        "modo_percentual_volumoso": modo,
+        "percentual_alvo_volumoso": alvo,
+        "percentual_volumoso_aplicado": aplicado,
+        "origem_percentual_volumoso": origem,
+    }
+
+
+def _fracao_snapshot(valor, nome: str, permitir_nulo: bool) -> float | None:
+    if valor is None and permitir_nulo:
+        return None
+    try:
+        fracao = float(valor)
+    except (TypeError, ValueError):
+        raise ValueError(f"A versao selecionada contem {nome} invalido.") from None
+    if not 0.0 <= fracao <= 1.0:
+        raise ValueError(f"A versao selecionada contem {nome} invalido.")
+    return fracao

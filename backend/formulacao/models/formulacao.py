@@ -21,6 +21,20 @@ class StatusFormulacao(models.TextChoices):
     ARQUIVADA = "ARQUIVADA", "Arquivada"
 
 
+class ModoPercentualVolumoso(models.TextChoices):
+    """Define se o total de volumoso e restricao ou resultado do motor."""
+
+    FIXADO_PELO_USUARIO = "FIXADO_PELO_USUARIO", "Fixado pelo usuario"
+    OTIMIZADO_PELO_SISTEMA = "OTIMIZADO_PELO_SISTEMA", "Otimizado pelo sistema"
+
+
+class OrigemPercentualVolumoso(models.TextChoices):
+    """Origem auditavel do percentual efetivamente aplicado."""
+
+    USUARIO = "USUARIO", "Usuario"
+    SISTEMA = "SISTEMA", "Sistema"
+
+
 class Formulacao(models.Model):
     """
     Raiz do agregado de formulação nutricional.
@@ -65,12 +79,38 @@ class Formulacao(models.Model):
     )
     percentual_alvo_volumoso = models.FloatField(
         default=0.50,
+        null=True,
+        blank=True,
         verbose_name="Alvo de volumosos (fração da MS)",
         help_text=(
-            "Participação total rígida de ingredientes classificados como "
-            "volumoso, armazenada como fração de 0 a 1; a API recebe e "
-            "devolve percentual de 0 a 100."
+            "Fonte de verdade do alvo rigido somente quando o modo e "
+            "FIXADO_PELO_USUARIO. Armazenado como fracao de 0 a 1; fica "
+            "nulo no modo OTIMIZADO_PELO_SISTEMA."
         ),
+    )
+    modo_percentual_volumoso = models.CharField(
+        max_length=30,
+        choices=ModoPercentualVolumoso.choices,
+        default=ModoPercentualVolumoso.FIXADO_PELO_USUARIO,
+        verbose_name="Modo de definição do volumoso",
+        help_text=(
+            "Controla o motor: no modo fixado, percentual_alvo_volumoso e "
+            "restricao rigida; no automatico, o total de volumoso e resultado."
+        ),
+    )
+    percentual_volumoso_aplicado = models.FloatField(
+        default=0.50,
+        verbose_name="Volumoso efetivamente aplicado (fração da MS)",
+        help_text=(
+            "Resultado auditavel entre 0 e 1, calculado a partir das "
+            "participacoes persistidas; nunca configura o motor."
+        ),
+    )
+    origem_percentual_volumoso = models.CharField(
+        max_length=10,
+        choices=OrigemPercentualVolumoso.choices,
+        default=OrigemPercentualVolumoso.USUARIO,
+        verbose_name="Origem do percentual de volumoso",
     )
     dt_inc = models.DateTimeField(auto_now_add=True, verbose_name="Criado em")
     dt_alt = models.DateTimeField(auto_now=True,     verbose_name="Alterado em")
@@ -97,6 +137,51 @@ class Formulacao(models.Model):
             models.Index(fields=["usuario", "-dt_inc"]),
             models.Index(fields=["status",  "-dt_inc"]),
         ]
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        modo_percentual_volumoso=ModoPercentualVolumoso.FIXADO_PELO_USUARIO,
+                        percentual_alvo_volumoso__isnull=False,
+                        origem_percentual_volumoso=OrigemPercentualVolumoso.USUARIO,
+                    )
+                    | models.Q(
+                        modo_percentual_volumoso=ModoPercentualVolumoso.OTIMIZADO_PELO_SISTEMA,
+                        percentual_alvo_volumoso__isnull=True,
+                        origem_percentual_volumoso=OrigemPercentualVolumoso.SISTEMA,
+                    )
+                ),
+                name="formulacao_estado_volumoso_coerente",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(percentual_alvo_volumoso__isnull=True)
+                    | models.Q(
+                        percentual_alvo_volumoso__gte=0.0,
+                        percentual_alvo_volumoso__lte=1.0,
+                    )
+                ),
+                name="formulacao_alvo_volumoso_0_1",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    percentual_volumoso_aplicado__gte=0.0,
+                    percentual_volumoso_aplicado__lte=1.0,
+                ),
+                name="formulacao_aplicado_volumoso_0_1",
+            ),
+        ]
 
     def __str__(self):
         return f"{self.titulo} — {self.lote}"
+
+    @property
+    def percentual_volumoso_para_motor(self) -> float | None:
+        """Retorna alvo somente quando a configuracao realmente o fixa."""
+        if self.modo_percentual_volumoso == ModoPercentualVolumoso.FIXADO_PELO_USUARIO:
+            if self.percentual_alvo_volumoso is None:
+                raise ValueError(
+                    "Formulação em modo fixado sem percentual alvo configurado."
+                )
+            return self.percentual_alvo_volumoso
+        return None

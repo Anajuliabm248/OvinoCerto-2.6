@@ -36,6 +36,10 @@ from formulacao.repositories import (
     ReferenciaSuplementoRepository,
 )
 from formulacao.services._configuracao_ingrediente import configuracao_a_partir_do_ingrediente
+from formulacao.services._percentual_volumoso import (
+    percentual_volumoso_aplicado,
+    resolver_configuracao_volumoso,
+)
 from formulacao.services.recalcular_formulacao_service import RecalcularFormulacaoService
 from ingrediente.models import Ingrediente
 
@@ -50,14 +54,17 @@ class GerarFormulacaoInicialService:
         ingrediente_ids: list[int],
         usuario_id: int | None = None,
         percentual_alvo_volumoso: float | None = None,
+        modo_percentual_volumoso: str | None = None,
         objetivo: str = "EQUILIBRADO",
     ) -> Formulacao:
         """Prepara os vetores, resolve a distribuição e persiste a formulação inicial."""
-        formulacao = Formulacao.objects.get(pk=formulacao_id)
-        percentual_alvo_efetivo = (
-            formulacao.percentual_alvo_volumoso
-            if percentual_alvo_volumoso is None
-            else percentual_alvo_volumoso
+        formulacao = Formulacao.objects.select_for_update().get(pk=formulacao_id)
+        modo_efetivo, percentual_fixo, origem_percentual = (
+            resolver_configuracao_volumoso(
+                formulacao=formulacao,
+                modo_solicitado=modo_percentual_volumoso,
+                percentual_solicitado=percentual_alvo_volumoso,
+            )
         )
 
         if not ExigenciaConfigurada.objects.filter(formulacao_id=formulacao_id).exists():
@@ -120,7 +127,7 @@ class GerarFormulacaoInicialService:
             requisitos=requisitos,
             participacao_atual=participacao,
             configuracoes=configuracoes,
-            percentual_alvo_volumoso=percentual_alvo_efetivo,
+            percentual_alvo_volumoso=percentual_fixo,
             reiniciar_livres=True,
             contexto_zootecnico=contexto_zootecnico,
             objetivo=objetivo,
@@ -134,16 +141,35 @@ class GerarFormulacaoInicialService:
                 origem=participacao.origens[pos],
             )
 
-        if percentual_alvo_volumoso is not None:
-            formulacao.percentual_alvo_volumoso = percentual_alvo_efetivo
-            formulacao.save(update_fields=["percentual_alvo_volumoso"])
+        percentual_aplicado = percentual_volumoso_aplicado(
+            resultado_dist.fracoes,
+            configuracoes,
+        )
+        if (
+            percentual_fixo is not None
+            and abs(percentual_aplicado - percentual_fixo) > 1e-9
+        ):
+            raise RuntimeError(
+                "Falha interna: o resultado nao respeitou o percentual fixo de volumoso."
+            )
+
+        formulacao.modo_percentual_volumoso = modo_efetivo
+        formulacao.percentual_alvo_volumoso = percentual_fixo
+        formulacao.percentual_volumoso_aplicado = percentual_aplicado
+        formulacao.origem_percentual_volumoso = origem_percentual
+        formulacao.save(update_fields=[
+            "modo_percentual_volumoso",
+            "percentual_alvo_volumoso",
+            "percentual_volumoso_aplicado",
+            "origem_percentual_volumoso",
+        ])
 
         motivo = (
             "geracao inicial"
             if resultado_dist.convergiu
             else f"geracao inicial (fallback: {resultado_dist.mensagem})"
         )
-        RecalcularFormulacaoService.executar(
+        saida_recalculo = RecalcularFormulacaoService.executar(
             formulacao_id=formulacao_id,
             usuario_id=usuario_id,
             motivo=motivo,
@@ -156,11 +182,17 @@ class GerarFormulacaoInicialService:
                 "n_ingredientes": len(ing_form_qs),
                 "convergiu": resultado_dist.convergiu,
                 "mensagem_solver": resultado_dist.mensagem,
-                "percentual_alvo_vol": percentual_alvo_efetivo,
+                "modo_percentual_volumoso": modo_efetivo,
+                "percentual_alvo_vol": percentual_fixo,
+                "percentual_volumoso_aplicado": percentual_aplicado,
+                "origem_percentual_volumoso": origem_percentual,
                 "objetivo": objetivo,
                 "usou_ingredientes_existentes": usou_ingredientes_existentes,
                 "origem_alvo": resultado_dist.origem_alvo,
                 "confianca_alvo": resultado_dist.confianca_alvo,
+                "adequacao_nutricional_completa": (
+                    bool(saida_recalculo.resultado.atende_tudo)
+                ),
             },
             usuario_id=usuario_id,
         )

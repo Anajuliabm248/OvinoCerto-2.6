@@ -76,6 +76,22 @@ class IngredienteFormulacaoRepository:
         )
 
     @staticmethod
+    def get_percentual_volumoso_aplicado(formulacao_id: int) -> float:
+        """Soma volumosos no banco 0-100 e devolve a fracao de dominio 0-1."""
+        from django.db.models import Sum
+
+        soma_percentual = (
+            IngredienteFormulacao.objects
+            .filter(
+                formulacao_id=formulacao_id,
+                ingrediente__classificacao__iexact="volumoso",
+            )
+            .aggregate(soma=Sum("ms_porcent"))["soma"]
+            or 0.0
+        )
+        return float(soma_percentual) / 100.0
+
+    @staticmethod
     def get_vetores_nutricionais(formulacao_id: int) -> list[VetorNutricional]:
         """
         Retorna um VetorNutricional por ingrediente, na mesma ordem de

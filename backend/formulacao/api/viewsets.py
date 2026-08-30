@@ -29,6 +29,7 @@ from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from drf_spectacular.utils import OpenApiExample, extend_schema
 
 from formulacao.api.listagem_exigencias_nrc import listar_sugeridas, listar_todas
 from formulacao.api.listagem_ingredientes import listar_ingredientes_disponiveis
@@ -304,6 +305,29 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
     # Etapa 2: gerar distribuição inicial
     # ------------------------------------------------------------------
 
+    @extend_schema(
+        request=GerarFormulacaoInicialInputSerializer,
+        responses={200: FormulacaoDetailSerializer},
+        examples=[
+            OpenApiExample(
+                "Volumoso fixado pelo usuario",
+                value={
+                    "modo_percentual_volumoso": "FIXADO_PELO_USUARIO",
+                    "percentual_alvo_volumoso": 20,
+                    "ingrediente_ids": [1, 2, 3],
+                },
+                request_only=True,
+            ),
+            OpenApiExample(
+                "Volumoso otimizado pelo sistema",
+                value={
+                    "modo_percentual_volumoso": "OTIMIZADO_PELO_SISTEMA",
+                    "ingrediente_ids": [1, 2, 3],
+                },
+                request_only=True,
+            ),
+        ],
+    )
     @action(detail=True, methods=["post"], url_path="gerar")
     def gerar(self, request, pk=None):
         """
@@ -329,6 +353,9 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
                 percentual_alvo_volumoso=serializer.validated_data.get(
                     "percentual_alvo_volumoso"
                 ),
+                modo_percentual_volumoso=serializer.validated_data.get(
+                    "modo_percentual_volumoso"
+                ),
                 objetivo=serializer.validated_data["objetivo"],
             )
         except ValueError as exc:
@@ -336,6 +363,27 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
 
         return Response(FormulacaoDetailSerializer(formulacao).data, status=status.HTTP_200_OK)
 
+    @extend_schema(
+        request=AtualizarPercentualVolumosoInputSerializer,
+        responses={200: FormulacaoDetailSerializer},
+        examples=[
+            OpenApiExample(
+                "Fixar novo percentual",
+                value={
+                    "modo_percentual_volumoso": "FIXADO_PELO_USUARIO",
+                    "percentual_alvo_volumoso": 35,
+                },
+                request_only=True,
+            ),
+            OpenApiExample(
+                "Liberar para nova otimizacao",
+                value={
+                    "modo_percentual_volumoso": "OTIMIZADO_PELO_SISTEMA",
+                },
+                request_only=True,
+            ),
+        ],
+    )
     @action(detail=True, methods=["patch"], url_path="percentual-volumoso")
     def atualizar_percentual_volumoso(self, request, pk=None):
         """PATCH /formulacoes/{id}/percentual-volumoso/."""
@@ -346,9 +394,12 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
             perfil = self._perfil(request)
             formulacao = AtualizarPercentualVolumosoService.executar(
                 formulacao_id=int(pk),
-                percentual_alvo_volumoso=serializer.validated_data[
+                percentual_alvo_volumoso=serializer.validated_data.get(
                     "percentual_alvo_volumoso"
-                ],
+                ),
+                modo_percentual_volumoso=serializer.validated_data.get(
+                    "modo_percentual_volumoso"
+                ),
                 usuario_id=perfil.id if perfil else None,
             )
         except ValueError as exc:

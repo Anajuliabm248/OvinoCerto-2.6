@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from formulacao.domain.nutrientes import Nutriente
+from formulacao.domain.nutrientes import Nutriente, indice_de
 from formulacao.domain.requisito import RequisitoNutriente
 from formulacao.engines.estimador_referencia import (
     ContextoZootecnico,
@@ -87,7 +87,7 @@ def test_referencia_distante_nao_vira_uma_regra_de_alta_confianca():
     assert confianca is None
 
 
-def test_referencia_exata_equilibrada_nao_e_deslocada_por_otimizacao_numerica():
+def test_referencia_exata_com_ca_p_baixo_e_corrigida_por_melhor_esforco():
     energia = (9.0, 82.0, 15.0, 4.0, 0.03, 0.25)
     proteico = (49.0, 81.0, 15.0, 2.0, 0.33, 0.57)
     contexto = ContextoZootecnico("cordeiros_4_meses", "crescimento", 30.0, 0.3, 1.0)
@@ -99,8 +99,9 @@ def test_referencia_exata_equilibrada_nao_e_deslocada_por_otimizacao_numerica():
             IngredienteReferencia("CONCENTRADO", "PROTEICO", 0.30, proteico),
         ),
     )
+    matriz = np.array([[*energia, 0.0], [*proteico, 0.0]])
     resultado = MotorAdequacao.gerar_distribuicao_inicial(
-        matriz_M=np.array([[*energia, 0.0], [*proteico, 0.0]]),
+        matriz_M=matriz,
         requisitos=_requisitos(),
         configuracoes=[
             ConfiguracaoIngrediente("CONCENTRADO", tipo="ENERGETICO"),
@@ -112,7 +113,19 @@ def test_referencia_exata_equilibrada_nao_e_deslocada_por_otimizacao_numerica():
     )
 
     assert resultado.convergiu
-    assert resultado.fracoes == pytest.approx([0.70, 0.30])
+    totais_referencia = np.array([0.70, 0.30]) @ matriz
+    totais_resultado = resultado.fracoes @ matriz
+    ca_p_referencia = (
+        totais_referencia[indice_de(Nutriente.CA)]
+        / totais_referencia[indice_de(Nutriente.P)]
+    )
+    ca_p_resultado = (
+        totais_resultado[indice_de(Nutriente.CA)]
+        / totais_resultado[indice_de(Nutriente.P)]
+    )
+    assert resultado.fracoes[1] > 0.99
+    assert ca_p_resultado > ca_p_referencia
+    assert ca_p_resultado == pytest.approx(0.33 / 0.57, abs=3e-4)
     assert resultado.origem_alvo == "referencia_validada_exata:TESTE-PRESERVACAO"
 
 

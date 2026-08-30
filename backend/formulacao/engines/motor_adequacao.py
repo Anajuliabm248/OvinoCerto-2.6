@@ -12,12 +12,15 @@ usando scipy.optimize.minimize (SLSQP).
      (CALCULADA) no espaço restante (1 - Σ travados).
 
 As regras estruturais são rígidas: soma, ingredientes travados, limites de
-participação e percentual de volumoso. Os requisitos nutricionais entram como
-penalidade de melhor esforço; quando a seleção não permite atendê-los, o motor
-preserva uma distribuição válida e o MotorAlertas informa os desvios.
+participação e, somente quando informado, percentual fixo de volumoso. Sem
+alvo, o total de volumoso é uma variável conjunta da otimização. Os requisitos
+nutricionais entram como penalidade de melhor esforço; quando a seleção não
+permite atendê-los, o motor preserva uma distribuição válida e o MotorAlertas
+informa os desvios.
 
-Em dietas mistas (volumoso + concentrado), o piso padrão de PB é uma exceção:
-ele é aplicado como restrição quando for viável junto às regras estruturais.
+A PB padrão configurada como valor ideal é uma exceção: sua faixa de igualdade
+é aplicada como restrição quando for viável junto às regras estruturais. PB
+legada configurada como piso mantém o comportamento anterior em dietas mistas.
 """
 
 from __future__ import annotations
@@ -25,13 +28,18 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from math import exp
+from typing import Callable
 
 import numpy as np
 from scipy.optimize import Bounds, linprog, minimize
 
 from formulacao.domain.nutrientes import NUTRIENTES_ORDEM, Nutriente, indice_de
 from formulacao.domain.participacao import ParticipacaoVetor
-from formulacao.domain.requisito import RequisitoNutriente
+from formulacao.domain.requisito import (
+    Operador,
+    RequisitoNutriente,
+    StatusAdequacao,
+)
 from formulacao.engines.estimador_referencia import (
     ContextoZootecnico,
     EstimadorPreferenciaAprendida,
@@ -101,12 +109,23 @@ class ResultadoDistribuicao:
     confianca_alvo: float | None = None
 
 
+@dataclass(frozen=True)
+class _CandidatoPercentualVolumoso:
+    """Solução estruturalmente válida avaliada pela busca automática."""
+
+    percentual: float
+    resultado: ResultadoDistribuicao = field(repr=False)
+    totais_nutricionais: np.ndarray = field(repr=False)
+    custo_total: float
+
+
 # Motor
 
 class MotorAdequacao:
     """Encontra participações válidas sem romper soma, travas, classes e limites."""
 
-    # Percentual-alvo de volumosos na distribuição heurística inicial.
+    # Percentual-alvo legado usado apenas quando um chamador antigo solicita
+    # explicitamente a geracao sem informar o novo modo.
     PERCENTUAL_ALVO_VOLUMOSO: float = 0.50
 
     # Tolerância do SLSQP
@@ -120,6 +139,29 @@ class MotorAdequacao:
     # Equilibra adequação nutricional e estabilidade da distribuição. As metas
     # nutricionais orientam o resultado, mas não podem romper regras rígidas.
     PESO_ADEQUACAO_NUTRICIONAL: float = 1.0
+    CA_P_PREFERENCIAL: tuple[float, float] = (2.0, 2.5)
+    CA_P_ACEITAVEL: tuple[float, float] = (1.5, 3.0)
+    P_MINIMO_CALCULO_CA_P: float = 1e-6
+    ORDEM_REQUISITOS_PADRAO: tuple[Nutriente, ...] = (
+        Nutriente.FDN,
+        Nutriente.NDT,
+        Nutriente.EE,
+        Nutriente.P,
+        Nutriente.CA,
+    )
+    PESO_PREFERENCIA_CA_P: float = 10.0
+    PESO_LIMITE_CA_P: float = 100.0
+    # Desempate deterministico no modo automatico. E varias ordens de
+    # grandeza menor que os desvios nutricionais normalizados, portanto nao
+    # escolhe previamente uma relacao volumoso:concentrado.
+    PESO_DESEMPATE_AUTOMATICO: float = 1e-8
+
+    # A busca automática não usa receitas nem um percentual de referência.
+    # Primeiro cobre todo o intervalo estrutural; depois refina somente a
+    # vizinhança mais promissora. Com 11 + 9 pontos, a resolução final é de
+    # 2,5 pontos percentuais quando o intervalo admissível é [0%, 100%].
+    PONTOS_BUSCA_PERCENTUAL: int = 11
+    PONTOS_REFINO_PERCENTUAL: int = 9
 
     PESOS_HEURISTICOS_TIPO: dict[str, float] = {
         "ENERGETICO": 1.0,
@@ -237,34 +279,40 @@ class MotorAdequacao:
         cls._validar_dimensoes(matriz_M, n)
         objetivo_normalizado = cls._normalizar_objetivo(objetivo)
 
-        alvo_vol = cls._normalizar_percentual_volumoso(
-            percentual_alvo_volumoso
+        alvo_vol = (
+            cls._normalizar_percentual_volumoso(percentual_alvo_volumoso)
             if percentual_alvo_volumoso is not None
-            else cls.PERCENTUAL_ALVO_VOLUMOSO
+            else None
         )
 
         mascara_volumoso = cls._mascara_volumoso(configuracoes)
         perfil_nutricional = cls._perfil_nutricional(configuracoes)
-        (
-            x_alvo,
-            usa_perfil_referencia,
-            origem_alvo,
-            confianca_alvo,
-        ) = cls._preparar_x_alvo(
-            configuracoes=configuracoes,
-            percentual_volumoso=alvo_vol,
-            matriz_M=matriz_M,
-            requisitos=requisitos,
-            contexto_zootecnico=contexto_zootecnico,
-            referencias_suplemento=referencias_suplemento,
-        )
         bounds = cls._bounds_geracao(
             configuracoes=configuracoes,
             soma_total=1.0,
             percentual_volumoso=alvo_vol,
-            aplicar_piso_tecnico=not usa_perfil_referencia,
+            aplicar_piso_tecnico=alvo_vol is not None,
         )
-        return cls._resolver(
+        if alvo_vol is None and bool(np.any(mascara_volumoso)):
+            x_alvo = cls._x_alvo_automatico(bounds, soma_alvo=1.0)
+            usa_perfil_referencia = False
+            origem_alvo = "otimizacao_conjunta_sem_alvo_volumoso"
+            confianca_alvo = None
+        else:
+            (
+                x_alvo,
+                usa_perfil_referencia,
+                origem_alvo,
+                confianca_alvo,
+            ) = cls._preparar_x_alvo(
+                configuracoes=configuracoes,
+                percentual_volumoso=alvo_vol or 0.0,
+                matriz_M=matriz_M,
+                requisitos=requisitos,
+                contexto_zootecnico=contexto_zootecnico,
+                referencias_suplemento=referencias_suplemento,
+            )
+        resultado = cls._resolver(
             n=n,
             matriz_M_sub=matriz_M,
             requisitos=requisitos,
@@ -277,13 +325,49 @@ class MotorAdequacao:
             modo_suplemento_concentrado=(
                 perfil_nutricional == PerfilNutricional.SUPLEMENTO_CONCENTRADO
             ),
-            dieta_mista=cls._tem_volumoso_e_concentrado(configuracoes),
+            dieta_mista=(
+                alvo_vol is not None
+                and 1e-9 < alvo_vol < 1.0 - 1e-9
+                and cls._tem_volumoso_e_concentrado(configuracoes)
+            ),
             usar_perfil_referencia=usa_perfil_referencia,
             origem_alvo=origem_alvo,
             confianca_alvo=confianca_alvo,
             custos_sub=cls._custos_configuracoes(configuracoes),
             objetivo=objetivo_normalizado,
+            otimizar_percentual_volumoso=alvo_vol is None,
         )
+        if alvo_vol is None and cls._tem_volumoso_e_concentrado(configuracoes):
+            limite_inferior, limite_superior = cls._intervalo_percentual_volumoso(
+                bounds_sub=cls._bounds_geracao(
+                    configuracoes=configuracoes,
+                    soma_total=1.0,
+                    percentual_volumoso=None,
+                    aplicar_piso_tecnico=False,
+                ),
+                mascara_volumoso_sub=mascara_volumoso,
+                soma_total=1.0,
+            )
+            return cls._selecionar_percentual_volumoso_automatico(
+                candidato_conjunto=resultado,
+                percentual_conjunto=float(resultado.fracoes[mascara_volumoso].sum()),
+                limite_inferior=limite_inferior,
+                limite_superior=limite_superior,
+                matriz_M=matriz_M,
+                requisitos=requisitos,
+                custos=cls._custos_configuracoes(configuracoes),
+                objetivo=objetivo_normalizado,
+                resolver_percentual=lambda percentual: cls.gerar_distribuicao_inicial(
+                    matriz_M=matriz_M,
+                    requisitos=requisitos,
+                    configuracoes=configuracoes,
+                    percentual_alvo_volumoso=percentual,
+                    contexto_zootecnico=contexto_zootecnico,
+                    objetivo=objetivo_normalizado,
+                    referencias_suplemento=referencias_suplemento,
+                ),
+            )
+        return resultado
 
     @classmethod
     def redistribuir(
@@ -322,6 +406,18 @@ class MotorAdequacao:
         indices_livres = np.where(mascara_livres)[0]
         n_livres = len(indices_livres)
 
+        alvo_vol = (
+            cls._normalizar_percentual_volumoso(percentual_alvo_volumoso)
+            if percentual_alvo_volumoso is not None
+            else None
+        )
+        mascara_volumoso_total = cls._mascara_volumoso(configuracoes)
+        volumoso_travado = float(
+            participacao_atual.fracoes[
+                mascara_travados & mascara_volumoso_total
+            ].sum()
+        )
+
         espaco_livre = participacao_atual.espaco_livre()
         if espaco_livre < -1e-9:
             raise ValueError(
@@ -335,6 +431,23 @@ class MotorAdequacao:
                     "Redistribuição inviável: todos os ingredientes estão "
                     "travados e a soma não fecha em 100%."
                 )
+            if alvo_vol is not None and abs(volumoso_travado - alvo_vol) > 1e-9:
+                raise ValueError(
+                    "Alvo de volumoso inviavel: todos os ingredientes estao "
+                    f"travados e somam {volumoso_travado * 100:.2f}% de "
+                    f"volumoso, diferente dos {alvo_vol * 100:.2f}% solicitados."
+                )
+            if not cls._atende_requisitos_explicitos(
+                x=participacao_atual.fracoes,
+                matriz_M_sub=matriz_M,
+                requisitos=requisitos,
+                contrib_fixas=np.zeros(len(NUTRIENTES_ORDEM)),
+                incluir_pb_padrao=False,
+            ):
+                raise ValueError(
+                    "Redistribuicao inviavel: as participacoes estao todas "
+                    "travadas e violam exigencias nutricionais rigidas."
+                )
             return ResultadoDistribuicao(
                 fracoes=participacao_atual.fracoes.copy(),
                 convergiu=True,
@@ -345,24 +458,6 @@ class MotorAdequacao:
             raise ValueError(
                 "Redistribuição inviável: não há espaço para os ingredientes "
                 "livres. Reduza ou destrave uma participação manual."
-            )
-
-        # Caso trivial: único ingrediente livre. Ainda assim, os limites são
-        # rígidos; uma sobra acima do máximo deve rejeitar a operação.
-        if n_livres == 1:
-            idx_livre = int(indices_livres[0])
-            cfg_livre = configuracoes[idx_livre]
-            cls._projetar_soma(
-                np.array([espaco_livre], dtype=float),
-                espaco_livre,
-                [(cfg_livre.limite_min, cfg_livre.limite_max)],
-            )
-            fracoes_resultado = participacao_atual.fracoes.copy()
-            fracoes_resultado[idx_livre] = espaco_livre
-            return ResultadoDistribuicao(
-                fracoes=fracoes_resultado,
-                convergiu=True,
-                mensagem="Redistribuição trivial (único ingrediente livre).",
             )
 
         # Sub-matrizes apenas para os livres
@@ -379,19 +474,9 @@ class MotorAdequacao:
         # escalada para o novo espaço livre (princípio de menor mudança)
         fracoes_livres_atuais = participacao_atual.fracoes[indices_livres]
         soma_livres_atual = fracoes_livres_atuais.sum()
-        alvo_vol = cls._normalizar_percentual_volumoso(
-            percentual_alvo_volumoso
-            if percentual_alvo_volumoso is not None
-            else cls.PERCENTUAL_ALVO_VOLUMOSO
-        )
-
         soma_volumoso_alvo = None
-        percentual_volumoso_livre = alvo_vol
-        if percentual_alvo_volumoso is not None:
-            mascara_volumoso_total = cls._mascara_volumoso(configuracoes)
-            volumoso_travado = float(
-                participacao_atual.fracoes[mascara_travados & mascara_volumoso_total].sum()
-            )
+        percentual_volumoso_livre = None
+        if alvo_vol is not None:
             soma_volumoso_alvo = alvo_vol - volumoso_travado
             if (
                 soma_volumoso_alvo < -1e-9
@@ -411,27 +496,40 @@ class MotorAdequacao:
         origem_alvo = "distribuicao_atual"
         confianca_alvo = None
         if reiniciar_livres:
-            (
-                x_alvo_livres,
-                usar_perfil_referencia,
-                origem_alvo,
-                confianca_alvo,
-            ) = cls._preparar_x_alvo(
-                configuracoes=cfg_livres,
-                percentual_volumoso=percentual_volumoso_livre,
-                matriz_M=M_livres,
-                requisitos=requisitos,
-                permitir_perfil_referencia=not bool(np.any(mascara_travados)),
-                contexto_zootecnico=contexto_zootecnico,
-                referencias_suplemento=referencias_suplemento,
-            )
-            x_alvo_livres = x_alvo_livres * espaco_livre
+            if alvo_vol is None and bool(np.any(cls._mascara_volumoso(cfg_livres))):
+                bounds_automaticos = cls._bounds_geracao(
+                    configuracoes=cfg_livres,
+                    soma_total=espaco_livre,
+                    percentual_volumoso=None,
+                    aplicar_piso_tecnico=False,
+                )
+                x_alvo_livres = cls._x_alvo_automatico(
+                    bounds_automaticos,
+                    soma_alvo=espaco_livre,
+                )
+                origem_alvo = "otimizacao_conjunta_sem_alvo_volumoso"
+            else:
+                (
+                    x_alvo_livres,
+                    usar_perfil_referencia,
+                    origem_alvo,
+                    confianca_alvo,
+                ) = cls._preparar_x_alvo(
+                    configuracoes=cfg_livres,
+                    percentual_volumoso=percentual_volumoso_livre or 0.0,
+                    matriz_M=M_livres,
+                    requisitos=requisitos,
+                    permitir_perfil_referencia=not bool(np.any(mascara_travados)),
+                    contexto_zootecnico=contexto_zootecnico,
+                    referencias_suplemento=referencias_suplemento,
+                )
+                x_alvo_livres = x_alvo_livres * espaco_livre
         elif soma_livres_atual > 1e-9:
             x_alvo_livres = fracoes_livres_atuais / soma_livres_atual * espaco_livre
         else:
             x_alvo_livres = cls._x_alvo_heuristico(
                 cfg_livres,
-                alvo_vol,
+                alvo_vol if alvo_vol is not None else 0.0,
                 matriz_M=M_livres,
             )
             x_alvo_livres = x_alvo_livres * espaco_livre
@@ -442,7 +540,9 @@ class MotorAdequacao:
                 configuracoes=cfg_livres,
                 soma_total=espaco_livre,
                 percentual_volumoso=percentual_volumoso_livre,
-                aplicar_piso_tecnico=not usar_perfil_referencia,
+                aplicar_piso_tecnico=(
+                    alvo_vol is not None and not usar_perfil_referencia
+                ),
             )
 
         # Os limites cadastrados são rígidos. A menor mudança possível fica
@@ -490,29 +590,360 @@ class MotorAdequacao:
                 cls._perfil_nutricional(configuracoes)
                 == PerfilNutricional.SUPLEMENTO_CONCENTRADO
             ),
-            dieta_mista=cls._tem_volumoso_e_concentrado(configuracoes),
+            dieta_mista=(
+                alvo_vol is not None
+                and 1e-9 < alvo_vol < 1.0 - 1e-9
+                and cls._tem_volumoso_e_concentrado(configuracoes)
+            ),
             usar_perfil_referencia=usar_perfil_referencia,
             origem_alvo=origem_alvo,
             confianca_alvo=confianca_alvo,
             custos_sub=cls._custos_configuracoes(cfg_livres),
             objetivo=objetivo_normalizado,
+            otimizar_percentual_volumoso=alvo_vol is None,
         )
 
         # Recompor vetor completo
         fracoes_resultado = participacao_atual.fracoes.copy()
         fracoes_resultado[indices_livres] = resultado_livres.fracoes
 
-        return ResultadoDistribuicao(
+        resultado_completo = ResultadoDistribuicao(
             fracoes=fracoes_resultado,
             convergiu=resultado_livres.convergiu,
             mensagem=resultado_livres.mensagem,
             origem_alvo=resultado_livres.origem_alvo,
             confianca_alvo=resultado_livres.confianca_alvo,
         )
+        if alvo_vol is None and cls._tem_volumoso_e_concentrado(configuracoes):
+            bounds_intervalo = [
+                (
+                    configuracao.limite_min,
+                    min(configuracao.limite_max, espaco_livre),
+                )
+                for configuracao in cfg_livres
+            ]
+            minimo_livre, maximo_livre = cls._intervalo_percentual_volumoso(
+                bounds_sub=bounds_intervalo,
+                mascara_volumoso_sub=mascara_volumoso_livres,
+                soma_total=espaco_livre,
+            )
+            return cls._selecionar_percentual_volumoso_automatico(
+                candidato_conjunto=resultado_completo,
+                percentual_conjunto=float(
+                    resultado_completo.fracoes[mascara_volumoso_total].sum()
+                ),
+                limite_inferior=volumoso_travado + minimo_livre,
+                limite_superior=volumoso_travado + maximo_livre,
+                matriz_M=matriz_M,
+                requisitos=requisitos,
+                custos=cls._custos_configuracoes(configuracoes),
+                objetivo=objetivo_normalizado,
+                resolver_percentual=lambda percentual: cls.redistribuir(
+                    matriz_M=matriz_M,
+                    requisitos=requisitos,
+                    participacao_atual=participacao_atual,
+                    configuracoes=configuracoes,
+                    percentual_alvo_volumoso=percentual,
+                    reiniciar_livres=reiniciar_livres,
+                    contexto_zootecnico=contexto_zootecnico,
+                    objetivo=objetivo_normalizado,
+                    referencias_suplemento=referencias_suplemento,
+                ),
+            )
+        return resultado_completo
 
     
     # Implementação interna
     
+
+    @staticmethod
+    def _intervalo_percentual_volumoso(
+        bounds_sub: list[tuple[float, float]],
+        mascara_volumoso_sub: np.ndarray,
+        soma_total: float,
+    ) -> tuple[float, float]:
+        """Calcula os extremos estruturais da soma do subgrupo volumoso."""
+        mascara = np.asarray(mascara_volumoso_sub, dtype=bool)
+        minimo_volumoso = sum(
+            bounds_sub[i][0] for i, marcado in enumerate(mascara) if marcado
+        )
+        maximo_volumoso = sum(
+            bounds_sub[i][1] for i, marcado in enumerate(mascara) if marcado
+        )
+        minimo_concentrado = sum(
+            bounds_sub[i][0] for i, marcado in enumerate(mascara) if not marcado
+        )
+        maximo_concentrado = sum(
+            bounds_sub[i][1] for i, marcado in enumerate(mascara) if not marcado
+        )
+        limite_inferior = max(minimo_volumoso, soma_total - maximo_concentrado)
+        limite_superior = min(maximo_volumoso, soma_total - minimo_concentrado)
+        if limite_inferior > limite_superior + 1e-9:
+            raise ValueError(
+                "Formulação inviável: mínimos e máximos dos ingredientes não "
+                "permitem fechar a soma total."
+            )
+        return (
+            max(0.0, float(limite_inferior)),
+            min(float(soma_total), float(limite_superior)),
+        )
+
+    @classmethod
+    def _selecionar_percentual_volumoso_automatico(
+        cls,
+        candidato_conjunto: ResultadoDistribuicao,
+        percentual_conjunto: float,
+        limite_inferior: float,
+        limite_superior: float,
+        matriz_M: np.ndarray,
+        requisitos: dict[Nutriente, RequisitoNutriente],
+        custos: np.ndarray,
+        objetivo: ObjetivoGeracao,
+        resolver_percentual: Callable[[float], ResultadoDistribuicao],
+    ) -> ResultadoDistribuicao:
+        """Escolhe o volumoso por adequação, não por receita memorizada.
+
+        Cada ponto fixa temporariamente apenas a soma dos volumosos e reutiliza
+        o resolvedor do modo fixado para distribuir os ingredientes. A seleção
+        prioriza metas que algum candidato consegue atender, usa desvios sempre
+        normalizados e impede que uma meta impossível domine a porcentagem.
+        Metas que nenhum candidato consegue atender permanecem auditáveis, mas
+        não dominam Ca:P, equilíbrio FDN/NDT ou custo. Sua magnitude participa
+        apenas do desempate final entre soluções nutricionalmente equivalentes.
+        """
+        if limite_inferior > limite_superior + 1e-9:
+            raise ValueError("Intervalo automático de volumoso inviável.")
+
+        candidatos: dict[float, _CandidatoPercentualVolumoso] = {}
+
+        def adicionar(
+            percentual: float,
+            resultado: ResultadoDistribuicao | None = None,
+        ) -> None:
+            percentual = min(
+                limite_superior,
+                max(limite_inferior, float(percentual)),
+            )
+            chave = round(percentual, 12)
+            if chave in candidatos:
+                return
+            try:
+                solucao = resultado or resolver_percentual(percentual)
+            except ValueError:
+                # O intervalo é estrutural; PB ou outra exigência rígida pode
+                # tornar um ponto específico inviável sem invalidar os demais.
+                return
+            totais = np.asarray(solucao.fracoes, dtype=float) @ matriz_M
+            candidatos[chave] = _CandidatoPercentualVolumoso(
+                percentual=percentual,
+                resultado=solucao,
+                totais_nutricionais=np.asarray(totais, dtype=float),
+                custo_total=float(np.asarray(solucao.fracoes, dtype=float) @ custos),
+            )
+
+        # O resultado da otimização conjunta anterior à busca preserva pontos
+        # isolados impostos por igualdades rígidas e funciona como fallback.
+        adicionar(percentual_conjunto, candidato_conjunto)
+        for percentual in np.linspace(
+            limite_inferior,
+            limite_superior,
+            cls.PONTOS_BUSCA_PERCENTUAL,
+        ):
+            adicionar(float(percentual))
+        for extremo in (0.0, 0.5, 1.0):
+            if limite_inferior - 1e-12 <= extremo <= limite_superior + 1e-12:
+                adicionar(extremo)
+
+        if not candidatos:
+            raise ValueError(
+                "Formulação automática inviável: nenhum percentual de volumoso "
+                "respeitou simultaneamente soma, limites, travas e exigências rígidas."
+            )
+
+        melhor_inicial = cls._melhor_candidato_percentual(
+            tuple(candidatos.values()), requisitos, objetivo
+        )
+        passo_inicial = (
+            (limite_superior - limite_inferior)
+            / max(1, cls.PONTOS_BUSCA_PERCENTUAL - 1)
+        )
+        if passo_inicial > 1e-12:
+            inicio_refino = max(
+                limite_inferior,
+                melhor_inicial.percentual - passo_inicial,
+            )
+            fim_refino = min(
+                limite_superior,
+                melhor_inicial.percentual + passo_inicial,
+            )
+            for percentual in np.linspace(
+                inicio_refino,
+                fim_refino,
+                cls.PONTOS_REFINO_PERCENTUAL,
+            ):
+                adicionar(float(percentual))
+
+        melhor = cls._melhor_candidato_percentual(
+            tuple(candidatos.values()), requisitos, objetivo
+        )
+        avaliacao_melhor = cls._avaliar_requisitos_candidato(melhor, requisitos)
+        pior_desvio = max(
+            (
+                magnitude
+                for status, magnitude in avaliacao_melhor.values()
+                if status != StatusAdequacao.ATENDE
+            ),
+            default=0.0,
+        )
+        criterio = (
+            f"custo ponderado por kg de MS {melhor.custo_total:.6f}"
+            if objetivo == ObjetivoGeracao.MENOR_CUSTO
+            else f"pior desvio nutricional {pior_desvio * 100:.2f}%"
+        )
+        return ResultadoDistribuicao(
+            fracoes=melhor.resultado.fracoes,
+            convergiu=melhor.resultado.convergiu,
+            mensagem=(
+                "Percentual automático de volumoso escolhido por busca "
+                f"hierárquica determinística: {melhor.percentual * 100:.2f}% "
+                f"({criterio}). {melhor.resultado.mensagem}"
+            ),
+            origem_alvo="otimizacao_percentual_hierarquica",
+            confianca_alvo=None,
+        )
+
+    @classmethod
+    def _melhor_candidato_percentual(
+        cls,
+        candidatos: tuple[_CandidatoPercentualVolumoso, ...],
+        requisitos: dict[Nutriente, RequisitoNutriente],
+        objetivo: ObjetivoGeracao,
+    ) -> _CandidatoPercentualVolumoso:
+        avaliacoes = {
+            id(candidato): cls._avaliar_requisitos_candidato(candidato, requisitos)
+            for candidato in candidatos
+        }
+        atingiveis = {
+            nutriente
+            for nutriente in requisitos
+            if any(
+                avaliacao[nutriente][0] == StatusAdequacao.ATENDE
+                for avaliacao in avaliacoes.values()
+            )
+        }
+
+        def chave(candidato: _CandidatoPercentualVolumoso) -> tuple[float, ...]:
+            avaliacao = avaliacoes[id(candidato)]
+            magnitudes_atingiveis = [
+                magnitude
+                for nutriente, (status, magnitude) in avaliacao.items()
+                if nutriente in atingiveis and status != StatusAdequacao.ATENDE
+            ]
+            magnitudes_inalcancaveis = [
+                magnitude
+                for nutriente, (status, magnitude) in avaliacao.items()
+                if nutriente not in atingiveis and status != StatusAdequacao.ATENDE
+            ]
+            pior_desvio_inalcancavel = max(
+                magnitudes_inalcancaveis,
+                default=0.0,
+            )
+            penalidade_inalcancaveis = sum(
+                magnitude * magnitude
+                for magnitude in magnitudes_inalcancaveis
+            )
+            margem_conjunta = cls._margem_conjunta_fdn_ndt(
+                candidato.totais_nutricionais,
+                requisitos,
+            )
+            prioridade_ca_p, desvio_ca_p = cls._prioridade_ca_p_candidato(
+                candidato.totais_nutricionais
+            )
+            concentracao = float(
+                candidato.resultado.fracoes @ candidato.resultado.fracoes
+            )
+            if objetivo == ObjetivoGeracao.MENOR_CUSTO:
+                criterio_objetivo = candidato.custo_total
+                criterio_secundario = -margem_conjunta
+            else:
+                criterio_objetivo = -margem_conjunta
+                criterio_secundario = penalidade_inalcancaveis
+            return (
+                float(len(magnitudes_atingiveis)),
+                float(sum(magnitudes_atingiveis)),
+                prioridade_ca_p,
+                desvio_ca_p,
+                float(criterio_objetivo),
+                float(criterio_secundario),
+                float(pior_desvio_inalcancavel),
+                float(penalidade_inalcancaveis),
+                float(sum(magnitudes_inalcancaveis)),
+                concentracao,
+                candidato.percentual,
+            )
+
+        return min(candidatos, key=chave)
+
+    @classmethod
+    def _prioridade_ca_p_candidato(
+        cls,
+        totais: np.ndarray,
+    ) -> tuple[float, float]:
+        """Ordena candidatos pela faixa Ca:P antes dos critérios econômicos."""
+        fosforo = float(totais[indice_de(Nutriente.P)])
+        if fosforo <= cls.P_MINIMO_CALCULO_CA_P:
+            return 2.0, 0.0
+        relacao = float(totais[indice_de(Nutriente.CA)]) / fosforo
+        preferencial_min, preferencial_max = cls.CA_P_PREFERENCIAL
+        aceitavel_min, aceitavel_max = cls.CA_P_ACEITAVEL
+        desvio = max(
+            preferencial_min - relacao,
+            relacao - preferencial_max,
+            0.0,
+        )
+        if preferencial_min - 1e-8 <= relacao <= preferencial_max + 1e-8:
+            return 0.0, 0.0
+        if aceitavel_min - 1e-8 <= relacao <= aceitavel_max + 1e-8:
+            return 1.0, float(desvio)
+        return 2.0, float(desvio)
+
+    @classmethod
+    def _avaliar_requisitos_candidato(
+        cls,
+        candidato: _CandidatoPercentualVolumoso,
+        requisitos: dict[Nutriente, RequisitoNutriente],
+    ) -> dict[Nutriente, tuple[StatusAdequacao, float]]:
+        return {
+            nutriente: requisito.avaliar(
+                cls._valor_nutriente(candidato.totais_nutricionais, nutriente)
+            )
+            for nutriente, requisito in requisitos.items()
+        }
+
+    @staticmethod
+    def _valor_nutriente(totais: np.ndarray, nutriente: Nutriente) -> float:
+        if nutriente == Nutriente.CA_P:
+            calcio = float(totais[indice_de(Nutriente.CA)])
+            fosforo = float(totais[indice_de(Nutriente.P)])
+            return calcio / fosforo if fosforo > 1e-12 else 0.0
+        return float(totais[indice_de(nutriente)])
+
+    @classmethod
+    def _margem_conjunta_fdn_ndt(
+        cls,
+        totais: np.ndarray,
+        requisitos: dict[Nutriente, RequisitoNutriente],
+    ) -> float:
+        """Menor reserva relativa entre os pisos configurados de FDN e NDT."""
+        margens: list[float] = []
+        for nutriente in (Nutriente.FDN, Nutriente.NDT):
+            requisito = requisitos.get(nutriente)
+            if requisito is None or requisito.valor_min is None:
+                return 0.0
+            valor = cls._valor_nutriente(totais, nutriente)
+            escala = max(abs(float(requisito.valor_min)), 1e-9)
+            margens.append((valor - float(requisito.valor_min)) / escala)
+        return float(min(margens))
 
     @classmethod
     def _resolver(
@@ -533,6 +964,7 @@ class MotorAdequacao:
         confianca_alvo: float | None = None,
         custos_sub: np.ndarray | None = None,
         objetivo: ObjetivoGeracao = ObjetivoGeracao.EQUILIBRADO,
+        otimizar_percentual_volumoso: bool = False,
     ) -> ResultadoDistribuicao:
         """
         Núcleo do otimizador. Opera apenas sobre o subconjunto de
@@ -545,6 +977,7 @@ class MotorAdequacao:
         restricoes_suplemento: list[dict] = []
         ndt_alvo_suplemento = None
         ca_p_alvo_suplemento = None
+        faixa_ca_p_padrao: tuple[float, float] | None = None
         # Uma referência exata já foi publicada como suplemento equilibrado.
         # Não adicionamos uma igualdade artificial de PB/NDT sobre ela: os
         # operadores configurados pelo usuário continuam como restrições, mas
@@ -563,9 +996,18 @@ class MotorAdequacao:
                 usar_perfil_referencia=usar_perfil_referencia,
             )
 
+        requisitos_padrao_inalcancaveis: frozenset[Nutriente] = frozenset()
+
         def objetivo(x: np.ndarray) -> float:
-            diff = x - x_alvo_sub
-            desvio_distribuicao = float(diff @ diff)
+            if otimizar_percentual_volumoso:
+                # O total de volumoso e uma consequencia de x, sem alvo ou
+                # penalidade de classe escolhida antecipadamente.
+                desvio_distribuicao = (
+                    cls.PESO_DESEMPATE_AUTOMATICO * float(x @ x)
+                )
+            else:
+                diff = x - x_alvo_sub
+                desvio_distribuicao = float(diff @ diff)
             desvio_nutricional = cls._penalidade_nutricional(
                 x=x,
                 matriz_M_sub=matriz_M_sub,
@@ -573,6 +1015,8 @@ class MotorAdequacao:
                 contrib_fixas=contrib_fixas,
                 ignorar_fdn_padrao=modo_suplemento_concentrado,
                 ignorar_minerais_padrao=usar_perfil_referencia,
+                escala_minima=1e-6,
+                nutrientes_ignorados=requisitos_padrao_inalcancaveis,
             )
             referencia_suplemento = 0.0
             if modo_suplemento_concentrado and not usar_perfil_referencia:
@@ -583,10 +1027,16 @@ class MotorAdequacao:
                     ndt_alvo=ndt_alvo_suplemento,
                     ca_p_alvo=ca_p_alvo_suplemento,
                 )
+            preferencia_ca_p = cls._penalidade_preferencia_ca_p(
+                x=x,
+                matriz_M_sub=matriz_M_sub,
+                contrib_fixas=contrib_fixas,
+            )
             return (
                 desvio_distribuicao
                 + cls.PESO_ADEQUACAO_NUTRICIONAL * desvio_nutricional
                 + referencia_suplemento
+                + preferencia_ca_p
                 + cls._penalidade_objetivo(
                     x=x,
                     matriz_M_sub=matriz_M_sub,
@@ -620,7 +1070,7 @@ class MotorAdequacao:
                     "jac": lambda x, c=coef_vol: c,
                 })
 
-        exigir_pb_padrao = cls._pb_padrao_rigido_em_dieta_mista(
+        exigir_pb_padrao = cls._pb_padrao_rigido_se_viavel(
             matriz_M_sub=matriz_M_sub,
             requisitos=requisitos,
             bounds_sub=bounds_sub,
@@ -630,6 +1080,51 @@ class MotorAdequacao:
             soma_volumoso_alvo=alvo_volumoso_validado,
             dieta_mista=dieta_mista,
         )
+        faixa_ca_p_aceitavel = cls._faixa_ca_p_padrao_se_viavel(
+            matriz_M_sub=matriz_M_sub,
+            requisitos=requisitos,
+            bounds_sub=bounds_sub,
+            soma_alvo=soma_alvo,
+            contrib_fixas=contrib_fixas,
+            mascara_volumoso_sub=mascara_volumoso_sub,
+            soma_volumoso_alvo=alvo_volumoso_validado,
+            incluir_pb_padrao=exigir_pb_padrao,
+            faixas=(cls.CA_P_ACEITAVEL,),
+        )
+        requisitos_padrao_rigidos = cls._requisitos_padrao_rigidos_se_viaveis(
+            matriz_M_sub=matriz_M_sub,
+            requisitos=requisitos,
+            bounds_sub=bounds_sub,
+            soma_alvo=soma_alvo,
+            contrib_fixas=contrib_fixas,
+            mascara_volumoso_sub=mascara_volumoso_sub,
+            soma_volumoso_alvo=alvo_volumoso_validado,
+            incluir_pb_padrao=exigir_pb_padrao,
+            faixa_ca_p_padrao=faixa_ca_p_aceitavel,
+            ignorar_fdn_padrao=modo_suplemento_concentrado,
+            ignorar_minerais_padrao=usar_perfil_referencia,
+        )
+        faixa_ca_p_padrao = cls._faixa_ca_p_padrao_se_viavel(
+            matriz_M_sub=matriz_M_sub,
+            requisitos=requisitos,
+            bounds_sub=bounds_sub,
+            soma_alvo=soma_alvo,
+            contrib_fixas=contrib_fixas,
+            mascara_volumoso_sub=mascara_volumoso_sub,
+            soma_volumoso_alvo=alvo_volumoso_validado,
+            incluir_pb_padrao=exigir_pb_padrao,
+            nutrientes_padrao_rigidos=requisitos_padrao_rigidos,
+        )
+        requisitos_padrao_inalcancaveis = frozenset(
+            nutriente
+            for nutriente in cls.ORDEM_REQUISITOS_PADRAO
+            if (
+                nutriente in requisitos
+                and not requisitos[nutriente].alterado_pelo_usuario
+                and requisitos[nutriente].valor_origem_nrc is not None
+                and nutriente not in requisitos_padrao_rigidos
+            )
+        )
 
         constraints.extend(restricoes_suplemento)
         constraints.extend(
@@ -638,6 +1133,8 @@ class MotorAdequacao:
                 requisitos=requisitos,
                 contrib_fixas=contrib_fixas,
                 incluir_pb_padrao=exigir_pb_padrao,
+                faixa_ca_p_padrao=faixa_ca_p_padrao,
+                nutrientes_padrao_rigidos=requisitos_padrao_rigidos,
             )
         )
 
@@ -646,8 +1143,8 @@ class MotorAdequacao:
             ub=[b[1] for b in bounds_sub],
         )
 
-        # O ponto inicial já satisfaz todas as regras estruturais. Isso também
-        # fornece um fallback válido se o otimizador numérico falhar.
+        # Valida primeiro a viabilidade puramente estrutural para manter
+        # mensagens especificas de soma/limites antes da prova nutricional.
         x0 = cls._projetar_estrutura(
             x=x_alvo_sub.copy(),
             soma_alvo=soma_alvo,
@@ -655,6 +1152,58 @@ class MotorAdequacao:
             mascara_subgrupo=mascara_volumoso_sub,
             soma_subgrupo_alvo=alvo_volumoso_validado,
         )
+
+        solucao_rigida = cls._solucao_restricoes_rigidas(
+            matriz_M_sub=matriz_M_sub,
+            requisitos=requisitos,
+            bounds_sub=bounds_sub,
+            soma_alvo=soma_alvo,
+            contrib_fixas=contrib_fixas,
+            mascara_volumoso_sub=mascara_volumoso_sub,
+            soma_volumoso_alvo=alvo_volumoso_validado,
+            incluir_pb_padrao=exigir_pb_padrao,
+            faixa_ca_p_padrao=faixa_ca_p_padrao,
+            nutrientes_padrao_rigidos=requisitos_padrao_rigidos,
+        )
+        if solucao_rigida is None:
+            alvo_texto = (
+                f" com alvo fixo de volumoso de {alvo_volumoso_validado * 100:.2f}%"
+                if alvo_volumoso_validado is not None
+                else ""
+            )
+            exigencias_rigidas = [
+                f"{nutriente.value} {requisito.operador.value}"
+                for nutriente, requisito in requisitos.items()
+                if requisito.alterado_pelo_usuario
+                or (
+                    exigir_pb_padrao
+                    and nutriente == Nutriente.PB
+                )
+                or nutriente in requisitos_padrao_rigidos
+            ]
+            detalhe_exigencias = (
+                "; exigencias rigidas: " + ", ".join(exigencias_rigidas)
+                if exigencias_rigidas
+                else ""
+            )
+            raise ValueError(
+                "Formulacao inviavel: soma, limites, participacoes travadas e "
+                f"exigencias nutricionais rigidas nao possuem solucao conjunta"
+                f"{alvo_texto}{detalhe_exigencias}."
+            )
+
+        # O ponto inicial ja satisfaz todas as regras estruturais. Se ele nao
+        # satisfizer as exigencias rigidas, usamos o ponto provado pelo LP.
+        if not cls._atende_requisitos_explicitos(
+            x=x0,
+            matriz_M_sub=matriz_M_sub,
+            requisitos=requisitos,
+            contrib_fixas=contrib_fixas,
+            incluir_pb_padrao=exigir_pb_padrao,
+            faixa_ca_p_padrao=faixa_ca_p_padrao,
+            nutrientes_padrao_rigidos=requisitos_padrao_rigidos,
+        ):
+            x0 = solucao_rigida
         # Em modo equilibrado, uma referência exata que já atende aos limites
         # estruturais e aos operadores explícitos é uma solução válida por si
         # só. Evitar uma nova otimização numérica impede que tolerâncias e
@@ -669,6 +1218,8 @@ class MotorAdequacao:
                 requisitos=requisitos,
                 contrib_fixas=contrib_fixas,
                 incluir_pb_padrao=exigir_pb_padrao,
+                faixa_ca_p_padrao=faixa_ca_p_padrao,
+                nutrientes_padrao_rigidos=requisitos_padrao_rigidos,
             )
         ):
             return ResultadoDistribuicao(
@@ -698,6 +1249,26 @@ class MotorAdequacao:
                 mascara_subgrupo=mascara_volumoso_sub,
                 soma_subgrupo_alvo=alvo_volumoso_validado,
             )
+            if not cls._atende_requisitos_explicitos(
+                x=fracoes,
+                matriz_M_sub=matriz_M_sub,
+                requisitos=requisitos,
+                contrib_fixas=contrib_fixas,
+                incluir_pb_padrao=exigir_pb_padrao,
+                faixa_ca_p_padrao=faixa_ca_p_padrao,
+                nutrientes_padrao_rigidos=requisitos_padrao_rigidos,
+            ):
+                return ResultadoDistribuicao(
+                    fracoes=solucao_rigida,
+                    convergiu=False,
+                    mensagem=(
+                        "O ponto numerico do SLSQP violou uma exigencia rigida; "
+                        "foi preservada uma solucao linear estruturalmente e "
+                        "nutricionalmente valida."
+                    ),
+                    origem_alvo=origem_alvo,
+                    confianca_alvo=confianca_alvo,
+                )
             return ResultadoDistribuicao(
                 fracoes=fracoes,
                 convergiu=True,
@@ -705,10 +1276,12 @@ class MotorAdequacao:
                     f"Distribuição estrutural válida gerada em {resultado.nit} "
                     "iterações; requisitos alterados explicitamente"
                     + (
-                        " e o piso padrão de PB da dieta mista"
+                        " e a PB padrão nutricionalmente ideal"
                         if exigir_pb_padrao
                         else ""
                     )
+                    + cls._descricao_faixa_ca_p(faixa_ca_p_padrao)
+                    + cls._descricao_requisitos_padrao(requisitos_padrao_rigidos)
                     + " foram aplicados como restrições. "
                     f"Alvo inicial: {origem_alvo}."
                 ),
@@ -717,12 +1290,12 @@ class MotorAdequacao:
             )
 
         return ResultadoDistribuicao(
-            fracoes=x0,
+            fracoes=solucao_rigida,
             convergiu=False,
             mensagem=(
                 f"SLSQP não convergiu ({resultado.message}). "
-                "Mantida a distribuição estrutural; revise requisitos explícitos "
-                "e limites de inclusão, pois podem ser inviáveis em conjunto."
+                "Mantida uma distribuicao que respeita soma, limites, travas e "
+                "exigencias rigidas; metas de melhor esforco podem permanecer desviadas."
             ),
             origem_alvo=origem_alvo,
             confianca_alvo=confianca_alvo,
@@ -736,11 +1309,15 @@ class MotorAdequacao:
         contrib_fixas: np.ndarray,
         ignorar_fdn_padrao: bool = False,
         ignorar_minerais_padrao: bool = False,
+        escala_minima: float = 1.0,
+        nutrientes_ignorados: frozenset[Nutriente] = frozenset(),
     ) -> float:
         penalidade = 0.0
         totais = x @ matriz_M_sub + contrib_fixas
 
         for nutriente, requisito in requisitos.items():
+            if nutriente in nutrientes_ignorados:
+                continue
             requisito_padrao = (
                 requisito.valor_origem_nrc is not None
                 and not requisito.alterado_pelo_usuario
@@ -763,13 +1340,45 @@ class MotorAdequacao:
                 valor = totais[NUTRIENTES_ORDEM.index(nutriente)]
 
             if lo is not None and valor < lo:
-                escala = max(abs(lo), 1.0)
+                escala = max(abs(lo), escala_minima)
                 penalidade += ((lo - valor) / escala) ** 2
             if hi is not None and valor > hi:
-                escala = max(abs(hi), 1.0)
+                escala = max(abs(hi), escala_minima)
                 penalidade += ((valor - hi) / escala) ** 2
 
         return float(penalidade)
+
+    @classmethod
+    def _penalidade_preferencia_ca_p(
+        cls,
+        x: np.ndarray,
+        matriz_M_sub: np.ndarray,
+        contrib_fixas: np.ndarray,
+    ) -> float:
+        """Busca 2,0-2,5 e, fora disso, aproxima da faixa aceitavel."""
+        totais = x @ matriz_M_sub + contrib_fixas
+        calcio = float(totais[indice_de(Nutriente.CA)])
+        fosforo = float(totais[indice_de(Nutriente.P)])
+        if fosforo <= cls.P_MINIMO_CALCULO_CA_P:
+            return 0.0
+
+        relacao = calcio / fosforo
+        preferencial_min, preferencial_max = cls.CA_P_PREFERENCIAL
+        aceitavel_min, aceitavel_max = cls.CA_P_ACEITAVEL
+        desvio_preferencial = max(
+            preferencial_min - relacao,
+            relacao - preferencial_max,
+            0.0,
+        )
+        desvio_aceitavel = max(
+            aceitavel_min - relacao,
+            relacao - aceitavel_max,
+            0.0,
+        )
+        return float(
+            cls.PESO_PREFERENCIA_CA_P * desvio_preferencial ** 2
+            + cls.PESO_LIMITE_CA_P * desvio_aceitavel ** 2
+        )
 
     @staticmethod
     def _atende_requisitos_explicitos(
@@ -778,17 +1387,23 @@ class MotorAdequacao:
         requisitos: dict[Nutriente, RequisitoNutriente],
         contrib_fixas: np.ndarray,
         incluir_pb_padrao: bool = False,
+        faixa_ca_p_padrao: tuple[float, float] | None = None,
+        nutrientes_padrao_rigidos: frozenset[Nutriente] = frozenset(),
     ) -> bool:
-        """Valida escolhas explícitas e, quando aplicável, o piso padrão de PB."""
+        """Valida escolhas explícitas e, quando aplicável, a PB padrão rígida."""
         totais = x @ matriz_M_sub + contrib_fixas
         for nutriente, requisito in requisitos.items():
             pb_padrao_rigido = (
                 incluir_pb_padrao
                 and nutriente == Nutriente.PB
-                and MotorAdequacao._alvo_padrao_minimo(requisitos, Nutriente.PB)
+                and MotorAdequacao._alvo_padrao_pb(requisitos)
                 is not None
             )
-            if not requisito.alterado_pelo_usuario and not pb_padrao_rigido:
+            if (
+                not requisito.alterado_pelo_usuario
+                and not pb_padrao_rigido
+                and nutriente not in nutrientes_padrao_rigidos
+            ):
                 continue
             if nutriente == Nutriente.CA_P:
                 ca = totais[indice_de(Nutriente.CA)]
@@ -801,7 +1416,120 @@ class MotorAdequacao:
                 return False
             if maximo is not None and valor > maximo + 1e-8:
                 return False
+        if faixa_ca_p_padrao is not None:
+            fosforo = float(totais[indice_de(Nutriente.P)])
+            if fosforo <= MotorAdequacao.P_MINIMO_CALCULO_CA_P:
+                return False
+            relacao = MotorAdequacao._valor_nutriente(totais, Nutriente.CA_P)
+            minimo, maximo = faixa_ca_p_padrao
+            if relacao < minimo - 1e-8 or relacao > maximo + 1e-8:
+                return False
         return True
+
+    @classmethod
+    def _solucao_restricoes_rigidas(
+        cls,
+        matriz_M_sub: np.ndarray,
+        requisitos: dict[Nutriente, RequisitoNutriente],
+        bounds_sub: list[tuple[float, float]],
+        soma_alvo: float,
+        contrib_fixas: np.ndarray,
+        mascara_volumoso_sub: np.ndarray | None,
+        soma_volumoso_alvo: float | None,
+        incluir_pb_padrao: bool,
+        faixa_ca_p_padrao: tuple[float, float] | None = None,
+        nutrientes_padrao_rigidos: frozenset[Nutriente] = frozenset(),
+    ) -> np.ndarray | None:
+        """Prova viabilidade conjunta das invariantes lineares rigidas."""
+        n = matriz_M_sub.shape[0]
+        a_eq: list[np.ndarray] = [np.ones(n, dtype=float)]
+        b_eq: list[float] = [soma_alvo]
+        if mascara_volumoso_sub is not None and soma_volumoso_alvo is not None:
+            mascara = np.asarray(mascara_volumoso_sub, dtype=bool)
+            if np.any(mascara) and not np.all(mascara):
+                a_eq.append(mascara.astype(float))
+                b_eq.append(soma_volumoso_alvo)
+
+        a_ub: list[np.ndarray] = []
+        b_ub: list[float] = []
+        for nutriente, requisito in requisitos.items():
+            pb_padrao_rigido = (
+                incluir_pb_padrao
+                and nutriente == Nutriente.PB
+                and cls._alvo_padrao_pb(requisitos) is not None
+            )
+            if (
+                not requisito.alterado_pelo_usuario
+                and not pb_padrao_rigido
+                and nutriente not in nutrientes_padrao_rigidos
+            ):
+                continue
+
+            minimo, maximo = requisito.limites_lp()
+            if nutriente == Nutriente.CA_P:
+                if minimo is not None:
+                    coef, fixo = cls._coeficiente_ca_p(
+                        matriz_M_sub, contrib_fixas, minimo
+                    )
+                    a_ub.append(-coef)
+                    b_ub.append(fixo)
+                if maximo is not None:
+                    coef, fixo = cls._coeficiente_ca_p(
+                        matriz_M_sub, contrib_fixas, maximo
+                    )
+                    a_ub.append(coef)
+                    b_ub.append(-fixo)
+                continue
+
+            coef, fixo = cls._coeficiente_requisito(
+                matriz_M_sub, contrib_fixas, nutriente
+            )
+            if minimo is not None:
+                a_ub.append(-coef)
+                b_ub.append(fixo - minimo)
+            if maximo is not None:
+                a_ub.append(coef)
+                b_ub.append(maximo - fixo)
+
+        if faixa_ca_p_padrao is not None:
+            minimo_ca_p, maximo_ca_p = faixa_ca_p_padrao
+            indice_p = indice_de(Nutriente.P)
+            coef_p = matriz_M_sub[:, indice_p]
+            fixo_p = float(contrib_fixas[indice_p])
+            coef_min, fixo_min = cls._coeficiente_ca_p(
+                matriz_M_sub, contrib_fixas, minimo_ca_p
+            )
+            coef_max, fixo_max = cls._coeficiente_ca_p(
+                matriz_M_sub, contrib_fixas, maximo_ca_p
+            )
+            a_ub.extend((-coef_p, -coef_min, coef_max))
+            b_ub.extend((
+                fixo_p - cls.P_MINIMO_CALCULO_CA_P,
+                fixo_min,
+                -fixo_max,
+            ))
+
+        try:
+            resultado = linprog(
+                c=np.zeros(n, dtype=float),
+                A_ub=np.asarray(a_ub, dtype=float) if a_ub else None,
+                b_ub=np.asarray(b_ub, dtype=float) if b_ub else None,
+                A_eq=np.asarray(a_eq, dtype=float),
+                b_eq=np.asarray(b_eq, dtype=float),
+                bounds=bounds_sub,
+                method="highs",
+            )
+        except ValueError:
+            return None
+        if not resultado.success:
+            return None
+        return cls._projetar_estrutura(
+            x=np.asarray(resultado.x, dtype=float),
+            soma_alvo=soma_alvo,
+            bounds=bounds_sub,
+            mascara_subgrupo=mascara_volumoso_sub,
+            soma_subgrupo_alvo=soma_volumoso_alvo,
+        )
 
     @staticmethod
     def _penalidade_objetivo(
@@ -825,22 +1553,29 @@ class MotorAdequacao:
         requisitos: dict[Nutriente, RequisitoNutriente],
         contrib_fixas: np.ndarray,
         incluir_pb_padrao: bool = False,
+        faixa_ca_p_padrao: tuple[float, float] | None = None,
+        nutrientes_padrao_rigidos: frozenset[Nutriente] = frozenset(),
     ) -> list[dict]:
         """Transforma operadores escolhidos pelo usuário em restrições reais.
 
         O NRC padrão continua sendo melhor esforço: uma seleção de ingredientes
         pode não conseguir atendê-lo. Ao editar um requisito, porém, o usuário
         espera semântica efetiva para ``=``, ``>=``, ``<=`` e ``ENTRE``.
-        Em dieta mista viável, o piso padrão de PB também é rígido.
+        A PB padrão igual ao valor ideal também é rígida quando viável. Para
+        snapshots legados, o piso padrão continua rígido apenas em dieta mista.
         """
         restricoes: list[dict] = []
         for nutriente, requisito in requisitos.items():
             pb_padrao_rigido = (
                 incluir_pb_padrao
                 and nutriente == Nutriente.PB
-                and cls._alvo_padrao_minimo(requisitos, Nutriente.PB) is not None
+                and cls._alvo_padrao_pb(requisitos) is not None
             )
-            if not requisito.alterado_pelo_usuario and not pb_padrao_rigido:
+            if (
+                not requisito.alterado_pelo_usuario
+                and not pb_padrao_rigido
+                and nutriente not in nutrientes_padrao_rigidos
+            ):
                 continue
 
             limite_min, limite_max = requisito.limites_lp()
@@ -871,16 +1606,164 @@ class MotorAdequacao:
             if limite_min is not None:
                 restricoes.append({
                     "type": "ineq",
-                    "fun": lambda x, c=coeficiente, f=fixo, alvo=limite_min: float(c @ x) + f - alvo,
+                    "fun": lambda x, c=coeficiente, f=fixo, alvo=limite_min: (
+                        float(c @ x) + f - alvo
+                    ),
                     "jac": lambda x, c=coeficiente: c,
                 })
             if limite_max is not None:
                 restricoes.append({
                     "type": "ineq",
-                    "fun": lambda x, c=coeficiente, f=fixo, alvo=limite_max: alvo - float(c @ x) - f,
+                    "fun": lambda x, c=coeficiente, f=fixo, alvo=limite_max: (
+                        alvo - float(c @ x) - f
+                    ),
                     "jac": lambda x, c=coeficiente: -c,
                 })
+        if faixa_ca_p_padrao is not None:
+            limite_min, limite_max = faixa_ca_p_padrao
+            indice_p = indice_de(Nutriente.P)
+            coef_p = matriz_M_sub[:, indice_p]
+            fixo_p = float(contrib_fixas[indice_p])
+            coef_min, fixo_min = cls._coeficiente_ca_p(
+                matriz_M_sub, contrib_fixas, limite_min
+            )
+            coef_max, fixo_max = cls._coeficiente_ca_p(
+                matriz_M_sub, contrib_fixas, limite_max
+            )
+            restricoes.extend((
+                {
+                    "type": "ineq",
+                    "fun": lambda x, c=coef_p, f=fixo_p: (
+                        float(c @ x) + f - cls.P_MINIMO_CALCULO_CA_P
+                    ),
+                    "jac": lambda x, c=coef_p: c,
+                },
+                {
+                    "type": "ineq",
+                    "fun": lambda x, c=coef_min, f=fixo_min: float(c @ x) + f,
+                    "jac": lambda x, c=coef_min: c,
+                },
+                {
+                    "type": "ineq",
+                    "fun": lambda x, c=coef_max, f=fixo_max: -float(c @ x) - f,
+                    "jac": lambda x, c=coef_max: -c,
+                },
+            ))
         return restricoes
+
+    @classmethod
+    def _faixa_ca_p_padrao_se_viavel(
+        cls,
+        matriz_M_sub: np.ndarray,
+        requisitos: dict[Nutriente, RequisitoNutriente],
+        bounds_sub: list[tuple[float, float]],
+        soma_alvo: float,
+        contrib_fixas: np.ndarray,
+        mascara_volumoso_sub: np.ndarray | None,
+        soma_volumoso_alvo: float | None,
+        incluir_pb_padrao: bool,
+        nutrientes_padrao_rigidos: frozenset[Nutriente] = frozenset(),
+        faixas: tuple[tuple[float, float], ...] | None = None,
+    ) -> tuple[float, float] | None:
+        """Prioriza 2,0-2,5; amplia para 1,5-3,0 somente se necessario."""
+        faixas_avaliadas = faixas or (
+            cls.CA_P_PREFERENCIAL,
+            cls.CA_P_ACEITAVEL,
+        )
+        for faixa in faixas_avaliadas:
+            solucao = cls._solucao_restricoes_rigidas(
+                matriz_M_sub=matriz_M_sub,
+                requisitos=requisitos,
+                bounds_sub=bounds_sub,
+                soma_alvo=soma_alvo,
+                contrib_fixas=contrib_fixas,
+                mascara_volumoso_sub=mascara_volumoso_sub,
+                soma_volumoso_alvo=soma_volumoso_alvo,
+                incluir_pb_padrao=incluir_pb_padrao,
+                faixa_ca_p_padrao=faixa,
+                nutrientes_padrao_rigidos=nutrientes_padrao_rigidos,
+            )
+            if solucao is not None:
+                return faixa
+        return None
+
+    @classmethod
+    def _requisitos_padrao_rigidos_se_viaveis(
+        cls,
+        matriz_M_sub: np.ndarray,
+        requisitos: dict[Nutriente, RequisitoNutriente],
+        bounds_sub: list[tuple[float, float]],
+        soma_alvo: float,
+        contrib_fixas: np.ndarray,
+        mascara_volumoso_sub: np.ndarray | None,
+        soma_volumoso_alvo: float | None,
+        incluir_pb_padrao: bool,
+        faixa_ca_p_padrao: tuple[float, float] | None,
+        ignorar_fdn_padrao: bool,
+        ignorar_minerais_padrao: bool,
+    ) -> frozenset[Nutriente]:
+        """Torna requisitos padrão rígidos após provar viabilidade conjunta.
+
+        A ordem mantém fibra, energia e EE de dietas totais antes dos minerais.
+        Em suplementos concentrados, FDN permanece informativa. Referências
+        validadas preservam a semântica histórica de minerais diagnósticos.
+        """
+        selecionados: set[Nutriente] = set()
+        for nutriente in cls.ORDEM_REQUISITOS_PADRAO:
+            if ignorar_fdn_padrao and nutriente == Nutriente.FDN:
+                continue
+            if (
+                ignorar_minerais_padrao
+                and nutriente in {Nutriente.P, Nutriente.CA}
+            ):
+                continue
+            requisito = requisitos.get(nutriente)
+            if (
+                requisito is None
+                or requisito.alterado_pelo_usuario
+                or requisito.valor_origem_nrc is None
+            ):
+                continue
+            tentativa = frozenset((*selecionados, nutriente))
+            solucao = cls._solucao_restricoes_rigidas(
+                matriz_M_sub=matriz_M_sub,
+                requisitos=requisitos,
+                bounds_sub=bounds_sub,
+                soma_alvo=soma_alvo,
+                contrib_fixas=contrib_fixas,
+                mascara_volumoso_sub=mascara_volumoso_sub,
+                soma_volumoso_alvo=soma_volumoso_alvo,
+                incluir_pb_padrao=incluir_pb_padrao,
+                faixa_ca_p_padrao=faixa_ca_p_padrao,
+                nutrientes_padrao_rigidos=tentativa,
+            )
+            if solucao is not None:
+                selecionados.add(nutriente)
+        return frozenset(selecionados)
+
+    @classmethod
+    def _descricao_faixa_ca_p(
+        cls,
+        faixa: tuple[float, float] | None,
+    ) -> str:
+        if faixa == cls.CA_P_PREFERENCIAL:
+            return " e a faixa Ca:P preferencial de 2,0 a 2,5"
+        if faixa == cls.CA_P_ACEITAVEL:
+            return " e a faixa Ca:P ampliada de 1,5 a 3,0"
+        return ""
+
+    @staticmethod
+    def _descricao_requisitos_padrao(
+        nutrientes: frozenset[Nutriente],
+    ) -> str:
+        if not nutrientes:
+            return ""
+        nomes = ", ".join(
+            nutriente.value
+            for nutriente in MotorAdequacao.ORDEM_REQUISITOS_PADRAO
+            if nutriente in nutrientes
+        )
+        return f" e os requisitos padrão viáveis ({nomes})"
 
     @staticmethod
     def _coeficiente_requisito(
@@ -930,7 +1813,7 @@ class MotorAdequacao:
     ) -> tuple[list[dict], float | None, float | None]:
         """Monta alvos de referência que só entram quando forem viáveis."""
         restricoes: list[dict] = []
-        pb_alvo = cls._alvo_padrao_minimo(requisitos, Nutriente.PB)
+        pb_alvo = cls._alvo_padrao_pb(requisitos)
         pb_ativo = False
 
         if pb_alvo is not None and cls._perfil_linear_viavel(
@@ -1006,6 +1889,26 @@ class MotorAdequacao:
         return float(requisito.valor_origem_nrc)
 
     @staticmethod
+    def _alvo_padrao_pb(
+        requisitos: dict[Nutriente, RequisitoNutriente],
+    ) -> float | None:
+        """Retorna o alvo NRC de PB sem confundir padrão com edição manual.
+
+        Aceita tanto o novo operador ``=`` quanto o ``>=`` legado para que
+        perfis históricos e snapshots continuem reproduzíveis. A semântica
+        rígida de cada operador é decidida por ``_pb_padrao_rigido_se_viavel``.
+        """
+        requisito = requisitos.get(Nutriente.PB)
+        if (
+            requisito is None
+            or requisito.alterado_pelo_usuario
+            or requisito.valor_origem_nrc is None
+            or requisito.operador not in {Operador.IGUAL, Operador.MAIOR_IGUAL}
+        ):
+            return None
+        return float(requisito.valor_origem_nrc)
+
+    @staticmethod
     def _perfil_linear_viavel(
         matriz_M_sub: np.ndarray,
         bounds_sub: list[tuple[float, float]],
@@ -1013,6 +1916,7 @@ class MotorAdequacao:
         contrib_fixas: np.ndarray,
         pb_alvo: float | None = None,
         pb_minimo: float | None = None,
+        pb_maximo: float | None = None,
         ndt_minimo: float | None = None,
         mascara_subgrupo: np.ndarray | None = None,
         soma_subgrupo_alvo: float | None = None,
@@ -1040,6 +1944,10 @@ class MotorAdequacao:
             idx_pb = indice_de(Nutriente.PB)
             a_ub.append(-matriz_M_sub[:, idx_pb])
             b_ub.append(-(pb_minimo - contrib_fixas[idx_pb]))
+        if pb_maximo is not None:
+            idx_pb = indice_de(Nutriente.PB)
+            a_ub.append(matriz_M_sub[:, idx_pb])
+            b_ub.append(pb_maximo - contrib_fixas[idx_pb])
         if ndt_minimo is not None:
             idx_ndt = indice_de(Nutriente.NDT)
             a_ub.append(-matriz_M_sub[:, idx_ndt])
@@ -1060,7 +1968,7 @@ class MotorAdequacao:
         return bool(resultado.success)
 
     @classmethod
-    def _pb_padrao_rigido_em_dieta_mista(
+    def _pb_padrao_rigido_se_viavel(
         cls,
         matriz_M_sub: np.ndarray,
         requisitos: dict[Nutriente, RequisitoNutriente],
@@ -1071,17 +1979,33 @@ class MotorAdequacao:
         soma_volumoso_alvo: float | None,
         dieta_mista: bool,
     ) -> bool:
-        """Ativa PB padrão só para dieta com ambos os grupos e solução viável."""
-        if not dieta_mista:
-            return False
+        """Ativa a semântica padrão de PB somente após prova de viabilidade.
 
-        pb_alvo = cls._alvo_padrao_minimo(requisitos, Nutriente.PB)
-        return pb_alvo is not None and cls._perfil_linear_viavel(
+        O novo padrão ``=`` busca o valor ideal em qualquer composição. O
+        antigo ``>=`` é mantido como piso apenas para snapshots de dietas
+        mistas, preservando a semântica histórica desses registros.
+        """
+        requisito = requisitos.get(Nutriente.PB)
+        pb_alvo = cls._alvo_padrao_pb(requisitos)
+        if requisito is None or pb_alvo is None:
+            return False
+        if requisito.operador == Operador.IGUAL:
+            pb_igual = None
+            pb_minimo, pb_maximo = requisito.limites_lp()
+        elif requisito.operador == Operador.MAIOR_IGUAL and dieta_mista:
+            pb_igual = None
+            pb_minimo = pb_alvo
+            pb_maximo = None
+        else:
+            return False
+        return cls._perfil_linear_viavel(
             matriz_M_sub=matriz_M_sub,
             bounds_sub=bounds_sub,
             soma_alvo=soma_alvo,
             contrib_fixas=contrib_fixas,
-            pb_minimo=pb_alvo,
+            pb_alvo=pb_igual,
+            pb_minimo=pb_minimo,
+            pb_maximo=pb_maximo,
             mascara_subgrupo=mascara_volumoso_sub,
             soma_subgrupo_alvo=soma_volumoso_alvo,
         )
@@ -1461,7 +2385,7 @@ class MotorAdequacao:
         ):
             return None
 
-        pb_alvo = cls._alvo_padrao_minimo(requisitos, Nutriente.PB)
+        pb_alvo = cls._alvo_padrao_pb(requisitos)
         ndt_alvo = cls._alvo_padrao_minimo(requisitos, Nutriente.NDT)
         if pb_alvo is None or ndt_alvo is None:
             return None
@@ -1541,7 +2465,7 @@ class MotorAdequacao:
         ):
             return None
 
-        pb_alvo = cls._alvo_padrao_minimo(requisitos, Nutriente.PB)
+        pb_alvo = cls._alvo_padrao_pb(requisitos)
         ndt_alvo = cls._alvo_padrao_minimo(requisitos, Nutriente.NDT)
         if pb_alvo is None or ndt_alvo is None:
             return None
@@ -1684,6 +2608,25 @@ class MotorAdequacao:
             cls._distribuir_orcamento(x, idx_conc, 1.0, configuracoes)
 
         return x
+
+    @classmethod
+    def _x_alvo_automatico(
+        cls,
+        bounds: list[tuple[float, float]],
+        soma_alvo: float,
+    ) -> np.ndarray:
+        """Ponto inicial neutro; nao define orcamento para nenhuma classe.
+
+        O ponto medio dos limites e apenas projetado para a soma total. No
+        modo automatico ele nao e alvo da funcao objetivo: volumosos e
+        concentrados permanecem variaveis conjuntas de 0 a 100%, conforme os
+        limites reais de cada ingrediente.
+        """
+        pontos_medios = np.asarray(
+            [(limite_min + limite_max) / 2.0 for limite_min, limite_max in bounds],
+            dtype=float,
+        )
+        return cls._projetar_soma(pontos_medios, soma_alvo, bounds)
 
     @classmethod
     def _distribuir_orcamento(

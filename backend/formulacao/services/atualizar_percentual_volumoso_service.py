@@ -1,4 +1,4 @@
-"""Caso de uso para alterar o alvo rígido de volumosos da formulação."""
+"""Caso de uso para fixar ou liberar o percentual total de volumoso."""
 
 from __future__ import annotations
 
@@ -19,26 +19,34 @@ from formulacao.repositories import (
     ReferenciaSuplementoRepository,
 )
 from formulacao.services._configuracao_ingrediente import configuracao_a_partir_do_ingrediente
+from formulacao.services._percentual_volumoso import (
+    percentual_volumoso_aplicado,
+    resolver_configuracao_volumoso,
+)
 from formulacao.services.recalcular_formulacao_service import RecalcularFormulacaoService
 
 
 class AtualizarPercentualVolumosoService:
-    """Atualiza o alvo e redistribui sem criar uma nova geração inicial."""
+    """Atualiza modo/configuracao sem confundir travas individuais."""
 
     @staticmethod
     @transaction.atomic
     def executar(
         formulacao_id: int,
-        percentual_alvo_volumoso: float,
+        percentual_alvo_volumoso: float | None = None,
+        modo_percentual_volumoso: str | None = None,
         usuario_id: int | None = None,
     ) -> Formulacao:
-        if not 0.0 <= percentual_alvo_volumoso <= 1.0:
-            raise ValueError("O percentual de volumoso deve estar entre 0% e 100%.")
-
         try:
             formulacao = Formulacao.objects.select_for_update().get(pk=formulacao_id)
         except Formulacao.DoesNotExist:
             raise ValueError(f"Formulação {formulacao_id} não encontrada.") from None
+
+        modo_novo, percentual_fixo, origem_nova = resolver_configuracao_volumoso(
+            formulacao=formulacao,
+            modo_solicitado=modo_percentual_volumoso,
+            percentual_solicitado=percentual_alvo_volumoso,
+        )
 
         if not ExigenciaConfigurada.objects.filter(formulacao_id=formulacao_id).exists():
             raise ValueError(
@@ -69,7 +77,7 @@ class AtualizarPercentualVolumosoService:
             requisitos=requisitos,
             participacao_atual=participacao,
             configuracoes=configuracoes,
-            percentual_alvo_volumoso=percentual_alvo_volumoso,
+            percentual_alvo_volumoso=percentual_fixo,
             reiniciar_livres=True,
             contexto_zootecnico=contexto_zootecnico,
             referencias_suplemento=ReferenciaSuplementoRepository.listar_ativas(),
@@ -82,15 +90,42 @@ class AtualizarPercentualVolumosoService:
                 origem=participacao.origens[posicao],
             )
 
-        percentual_anterior = formulacao.percentual_alvo_volumoso
-        formulacao.percentual_alvo_volumoso = percentual_alvo_volumoso
-        formulacao.save(update_fields=["percentual_alvo_volumoso"])
+        percentual_aplicado_novo = percentual_volumoso_aplicado(
+            resultado.fracoes,
+            configuracoes,
+        )
+        if (
+            percentual_fixo is not None
+            and abs(percentual_aplicado_novo - percentual_fixo) > 1e-9
+        ):
+            raise RuntimeError(
+                "Falha interna: o resultado nao respeitou o percentual fixo de volumoso."
+            )
+
+        estado_anterior = {
+            "modo": formulacao.modo_percentual_volumoso,
+            "percentual_alvo": formulacao.percentual_alvo_volumoso,
+            "percentual_aplicado": formulacao.percentual_volumoso_aplicado,
+            "origem": formulacao.origem_percentual_volumoso,
+        }
+        formulacao.modo_percentual_volumoso = modo_novo
+        formulacao.percentual_alvo_volumoso = percentual_fixo
+        formulacao.percentual_volumoso_aplicado = percentual_aplicado_novo
+        formulacao.origem_percentual_volumoso = origem_nova
+        formulacao.save(update_fields=[
+            "modo_percentual_volumoso",
+            "percentual_alvo_volumoso",
+            "percentual_volumoso_aplicado",
+            "origem_percentual_volumoso",
+        ])
 
         motivo = (
-            "alteração do percentual de volumoso: "
-            f"{percentual_anterior * 100:.2f}% → {percentual_alvo_volumoso * 100:.2f}%"
+            "alteracao da definicao do percentual de volumoso: "
+            f"{estado_anterior['modo']} -> {modo_novo}; aplicado "
+            f"{estado_anterior['percentual_aplicado'] * 100:.2f}% -> "
+            f"{percentual_aplicado_novo * 100:.2f}%"
         )
-        RecalcularFormulacaoService.executar(
+        saida_recalculo = RecalcularFormulacaoService.executar(
             formulacao_id=formulacao_id,
             usuario_id=usuario_id,
             motivo=motivo,
@@ -99,10 +134,18 @@ class AtualizarPercentualVolumosoService:
             formulacao_id=formulacao_id,
             tipo_evento=TipoEvento.PERCENTUAL_VOLUMOSO_ALTERADO,
             payload={
-                "percentual_anterior": percentual_anterior,
-                "percentual_novo": percentual_alvo_volumoso,
+                "estado_anterior": estado_anterior,
+                "percentual_anterior": estado_anterior["percentual_alvo"],
+                "percentual_novo": percentual_fixo,
+                "modo_novo": modo_novo,
+                "percentual_alvo_novo": percentual_fixo,
+                "percentual_aplicado_novo": percentual_aplicado_novo,
+                "origem_nova": origem_nova,
                 "convergiu": resultado.convergiu,
                 "mensagem_solver": resultado.mensagem,
+                "adequacao_nutricional_completa": (
+                    bool(saida_recalculo.resultado.atende_tudo)
+                ),
             },
             usuario_id=usuario_id,
         )

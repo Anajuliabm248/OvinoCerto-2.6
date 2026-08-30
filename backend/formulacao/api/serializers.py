@@ -13,6 +13,7 @@ from formulacao.models import (
     EventoFormulacao,
     Formulacao,
     IngredienteFormulacao,
+    ModoPercentualVolumoso,
     ParametrosViabilidade,
     SnapshotFormulacao,
 )
@@ -157,15 +158,25 @@ class IniciarFormulacaoInputSerializer(serializers.Serializer):
 # ---------------------------------------------------------------------------
 
 class GerarFormulacaoInicialInputSerializer(serializers.Serializer):
-    """Recebe ingredientes e o alvo rígido de volumoso usado na distribuição."""
+    """Escolhe entre alvo rigido e percentual otimizado na geracao."""
+    modo_percentual_volumoso = serializers.ChoiceField(
+        choices=ModoPercentualVolumoso.choices,
+        required=False,
+        label="Modo do percentual de volumoso",
+        help_text=(
+            "FIXADO_PELO_USUARIO exige um alvo rigido; "
+            "OTIMIZADO_PELO_SISTEMA deixa o total de volumoso livre entre "
+            "os limites estruturais, inclusive 0%."
+        ),
+    )
     percentual_alvo_volumoso = serializers.FloatField(
         required=False,
         min_value=0.0,
         max_value=100.0,
         label="Alvo de volumosos (%)",
         help_text=(
-            "Informe o percentual de 0 a 100. Se omitido, preserva o alvo "
-            "já configurado na formulação (50% na primeira geração)."
+            "Alvo rigido no modo FIXADO_PELO_USUARIO. Aceita fracao de 0 a "
+            "1 ou percentual acima de 1 ate 100 (20 vira 0.20)."
         ),
         style={"base_template": "input.html"},
     )
@@ -195,26 +206,68 @@ class GerarFormulacaoInicialInputSerializer(serializers.Serializer):
 
     def validate_percentual_alvo_volumoso(self, value: float) -> float:
         """
-        Normaliza o percentual público de 0-100 para a fração interna 0-1.
+        Preserva a compatibilidade com fracao e percentual da API.
         """
         valor = float(value)
-        return valor / 100.0
+        return valor / 100.0 if valor > 1.0 else valor
+
+    def validate(self, attrs):
+        modo = attrs.get("modo_percentual_volumoso")
+        informou_percentual = "percentual_alvo_volumoso" in attrs
+        if modo == ModoPercentualVolumoso.OTIMIZADO_PELO_SISTEMA and informou_percentual:
+            raise serializers.ValidationError({
+                "percentual_alvo_volumoso": (
+                    "Nao informe percentual no modo OTIMIZADO_PELO_SISTEMA."
+                )
+            })
+        if modo is None and informou_percentual:
+            attrs["modo_percentual_volumoso"] = (
+                ModoPercentualVolumoso.FIXADO_PELO_USUARIO
+            )
+        return attrs
 
 
 class AtualizarPercentualVolumosoInputSerializer(serializers.Serializer):
-    """Valida o novo alvo rígido de volumosos da formulação."""
+    """Fixa, altera ou libera o total de volumoso da formulacao."""
+
+    modo_percentual_volumoso = serializers.ChoiceField(
+        choices=ModoPercentualVolumoso.choices,
+        required=False,
+        label="Modo do percentual de volumoso",
+    )
 
     percentual_alvo_volumoso = serializers.FloatField(
+        required=False,
         min_value=0.0,
         max_value=100.0,
         label="Alvo de volumosos (%)",
-        help_text="Informe o percentual de 0 a 100.",
+        help_text="Aceita fracao de 0 a 1 ou percentual acima de 1 ate 100.",
         style={"base_template": "input.html"},
     )
 
     def validate_percentual_alvo_volumoso(self, value: float) -> float:
         valor = float(value)
-        return valor / 100.0
+        return valor / 100.0 if valor > 1.0 else valor
+
+    def validate(self, attrs):
+        modo = attrs.get("modo_percentual_volumoso")
+        informou_percentual = "percentual_alvo_volumoso" in attrs
+        if modo is None and informou_percentual:
+            attrs["modo_percentual_volumoso"] = (
+                ModoPercentualVolumoso.FIXADO_PELO_USUARIO
+            )
+            modo = attrs["modo_percentual_volumoso"]
+        if modo == ModoPercentualVolumoso.OTIMIZADO_PELO_SISTEMA and informou_percentual:
+            raise serializers.ValidationError({
+                "percentual_alvo_volumoso": (
+                    "Nao informe percentual ao liberar a otimizacao automatica."
+                )
+            })
+        if modo is None:
+            raise serializers.ValidationError(
+                "Informe o modo ou um novo percentual de volumoso."
+            )
+        return attrs
 
 # ---------------------------------------------------------------------------
 # Exigência configurada
@@ -394,13 +447,22 @@ class SugestaoIngredienteSerializer(serializers.Serializer):
 # ---------------------------------------------------------------------------
 
 class _PercentualAlvoVolumosoOutputMixin:
-    """Converte o alvo interno em fração para percentual no contrato HTTP."""
+    """Converte os estados internos em fracao para percentual HTTP."""
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
         valor = data.get("percentual_alvo_volumoso")
         if valor is not None:
-            data["percentual_alvo_volumoso"] = float(valor) * 100.0
+            percentual = float(valor) * 100.0
+            data["percentual_alvo_volumoso"] = (
+                0.0 if abs(percentual) < 1e-9 else percentual
+            )
+        aplicado = data.get("percentual_volumoso_aplicado")
+        if aplicado is not None:
+            percentual = float(aplicado) * 100.0
+            data["percentual_volumoso_aplicado"] = (
+                0.0 if abs(percentual) < 1e-9 else percentual
+            )
         return data
 
 
@@ -416,7 +478,9 @@ class FormulacaoListSerializer(
         model  = Formulacao
         fields = [
             "id", "lote", "lote_nome", "titulo", "status",
-            "percentual_alvo_volumoso", "dt_inc", "dt_alt",
+            "modo_percentual_volumoso", "percentual_alvo_volumoso",
+            "percentual_volumoso_aplicado", "origem_percentual_volumoso",
+            "dt_inc", "dt_alt",
         ]
         read_only_fields = fields
 
@@ -429,14 +493,18 @@ class FormulacaoDetailSerializer(
     lote_nome    = serializers.CharField(source="lote.nome_lote",   read_only=True)
     exigencias   = serializers.SerializerMethodField()
     ingredientes = serializers.SerializerMethodField()
+    adequacao_nutricional_completa = serializers.SerializerMethodField()
+    desvios_nutricionais = serializers.SerializerMethodField()
 
     class Meta:
         """Expõe o agregado completo sem aceitar escrita por este serializer."""
         model  = Formulacao
         fields = [
             "id", "lote", "lote_nome", "usuario", "titulo", "observacoes",
-            "status", "percentual_alvo_volumoso", "dt_inc", "dt_alt",
-            "exigencias", "ingredientes",
+            "status", "modo_percentual_volumoso", "percentual_alvo_volumoso",
+            "percentual_volumoso_aplicado", "origem_percentual_volumoso",
+            "adequacao_nutricional_completa", "desvios_nutricionais",
+            "dt_inc", "dt_alt", "exigencias", "ingredientes",
         ]
         read_only_fields = fields
 
@@ -457,6 +525,26 @@ class FormulacaoDetailSerializer(
             .order_by("-ms_porcent")
         )
         return IngredienteFormulacaoSerializer(qs, many=True).data
+
+    def _resultado_mais_recente(self, obj: Formulacao) -> dict:
+        snapshot = obj.snapshots.order_by("-versao_num").only("payload").first()
+        if snapshot is None:
+            return {}
+        return snapshot.payload.get("resultado_adequacao") or {}
+
+    def get_adequacao_nutricional_completa(self, obj: Formulacao) -> bool | None:
+        """Nao confunde sucesso numerico do solver com atendimento nutricional."""
+        resultado = self._resultado_mais_recente(obj)
+        return resultado.get("atende_tudo") if resultado else None
+
+    def get_desvios_nutricionais(self, obj: Formulacao) -> list[dict]:
+        """Explicita somente exigencias deficitarias ou excedidas."""
+        resultado = self._resultado_mais_recente(obj)
+        return [
+            desvio
+            for desvio in resultado.get("desvios", [])
+            if desvio.get("status") != "ATENDE"
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -536,7 +624,10 @@ class ParametrosViabilidadeBasicosSerializer(serializers.ModelSerializer):
         data = super().to_representation(instance)
         for campo in ("cms_percentual_pv", "perdas_alimentos_percentual"):
             if data.get(campo) is not None:
-                data[campo] = float(data[campo]) * 100.0
+                # A persistência continua em fração 0-1. Arredondar somente
+                # na fronteira HTTP remove artefatos binários como
+                # 0.03 * 100 == 3.0000000000000004 sem perder precisão útil.
+                data[campo] = round(float(data[campo]) * 100.0, 10)
         return data
 
 

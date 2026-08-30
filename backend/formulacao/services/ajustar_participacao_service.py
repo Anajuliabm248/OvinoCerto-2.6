@@ -62,6 +62,7 @@ from formulacao.repositories import (
     IngredienteFormulacaoRepository,
 )
 from formulacao.services._configuracao_ingrediente import configuracao_a_partir_do_ingrediente
+from formulacao.services._percentual_volumoso import obter_alvo_volumoso_para_motor
 from formulacao.services.recalcular_formulacao_service import RecalcularFormulacaoService
 
 # Tolerância apenas para ruído de ponto flutuante nas validações.
@@ -144,9 +145,10 @@ class AjustarParticipacaoService:
         # ------------------------------------------------------------------
         # Redistribuir os ingredientes livres restantes para fechar 100%
         # ------------------------------------------------------------------
-        resultado_dist = None
-        if tem_livre_restante:
-            resultado_dist = AjustarParticipacaoService._redistribuir_livres(formulacao_id)
+        resultado_validacao = AjustarParticipacaoService._redistribuir_livres(
+            formulacao_id
+        )
+        resultado_dist = resultado_validacao if tem_livre_restante else None
 
         # ------------------------------------------------------------------
         # Registrar evento antes do recálculo
@@ -255,6 +257,12 @@ class AjustarParticipacaoService:
                 f"o limite máximo cadastrado é "
                 f"{configuracao_alvo.limite_max * 100:.2f}%."
             )
+        if nova_fracao < configuracao_alvo.limite_min - _TOLERANCIA_VALIDACAO:
+            raise ValueError(
+                f"Não é possível travar este ingrediente em {nova_fracao * 100:.2f}%: "
+                f"o limite mínimo cadastrado é "
+                f"{configuracao_alvo.limite_min * 100:.2f}%."
+            )
 
         soma_outros_travados = 0.0
         ids_outros_livres: list[int] = []
@@ -353,9 +361,7 @@ class AjustarParticipacaoService:
             requisitos=requisitos,
             participacao_atual=participacao,
             configuracoes=configuracoes,
-            percentual_alvo_volumoso=Formulacao.objects.values_list(
-                "percentual_alvo_volumoso", flat=True
-            ).get(pk=formulacao_id),
+            percentual_alvo_volumoso=obter_alvo_volumoso_para_motor(formulacao_id),
         )
 
         ids = participacao.ids_ingredientes

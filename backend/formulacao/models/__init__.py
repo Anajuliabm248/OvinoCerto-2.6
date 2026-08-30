@@ -1,7 +1,12 @@
 '''Starta todos os models'''
 # pylint: skip-file
 
-from .formulacao import Formulacao, StatusFormulacao
+from .formulacao import (
+    Formulacao,
+    ModoPercentualVolumoso,
+    OrigemPercentualVolumoso,
+    StatusFormulacao,
+)
 from .exigencia_configurada import (
     ExigenciaConfigurada,
     ConfiguracaoNutriente,
@@ -22,6 +27,8 @@ from .referencia_suplemento import (
 
 __all__ = [
     "Formulacao",
+    "ModoPercentualVolumoso",
+    "OrigemPercentualVolumoso",
     "StatusFormulacao",
     "ExigenciaConfigurada",
     "ConfiguracaoNutriente",

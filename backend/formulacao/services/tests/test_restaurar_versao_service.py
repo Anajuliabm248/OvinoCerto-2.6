@@ -1,5 +1,6 @@
 from unittest.mock import patch
 
+import pytest
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
@@ -11,11 +12,18 @@ from formulacao.models import (
     ExigenciaConfigurada,
     Formulacao,
     IngredienteFormulacao,
+    ModoPercentualVolumoso,
+    OrigemParticipacaoChoices,
+    OrigemPercentualVolumoso,
     SnapshotFormulacao,
+    StatusFormulacao,
     TipoEvento,
 )
 from formulacao.services.atualizar_percentual_volumoso_service import (
     AtualizarPercentualVolumosoService,
+)
+from formulacao.services.gerar_formulacao_inicial_service import (
+    GerarFormulacaoInicialService,
 )
 from formulacao.services.restaurar_versao_service import RestaurarVersaoService
 from ingrediente.models import Ingrediente
@@ -139,6 +147,13 @@ class RestaurarVersaoServiceTests(TestCase):
         self.formulacao.refresh_from_db()
         assert self.exigencia.cms_kg == 1.2
         assert self.formulacao.percentual_alvo_volumoso == 0.35
+        assert self.formulacao.modo_percentual_volumoso == (
+            ModoPercentualVolumoso.FIXADO_PELO_USUARIO
+        )
+        assert self.formulacao.percentual_volumoso_aplicado == 0.35
+        assert self.formulacao.origem_percentual_volumoso == (
+            OrigemPercentualVolumoso.USUARIO
+        )
         assert self.exigencia.exigencia_nrc_origem_id == self.origem_antiga.id
 
         configuracoes = {
@@ -175,6 +190,9 @@ class RestaurarVersaoServiceTests(TestCase):
             ingrediente=concentrado_a,
             ms_porcent=40.0,
         )
+        ConfiguracaoNutriente.objects.filter(
+            exigencia_configurada=self.exigencia
+        ).update(alterado_pelo_usuario=False)
         IngredienteFormulacao.objects.create(
             formulacao=self.formulacao,
             ingrediente=concentrado_b,
@@ -196,6 +214,13 @@ class RestaurarVersaoServiceTests(TestCase):
             ingrediente=volumoso,
         ).ms_porcent
         assert self.formulacao.percentual_alvo_volumoso == 0.40
+        assert self.formulacao.modo_percentual_volumoso == (
+            ModoPercentualVolumoso.FIXADO_PELO_USUARIO
+        )
+        assert self.formulacao.percentual_volumoso_aplicado == 0.40
+        assert self.formulacao.origem_percentual_volumoso == (
+            OrigemPercentualVolumoso.USUARIO
+        )
         assert participacao_volumoso == 40.0
         recalcular.assert_called_once()
         evento = EventoFormulacao.objects.get(
@@ -203,6 +228,203 @@ class RestaurarVersaoServiceTests(TestCase):
         )
         assert evento.payload["percentual_anterior"] == 0.50
         assert evento.payload["percentual_novo"] == 0.40
+
+    def test_alterna_fixado_automatico_e_novo_fixado_preservando_trava(self):
+        volumoso = self._criar_ingrediente("Volumoso travado", "volumoso", "silagens")
+        concentrado_a = self._criar_ingrediente("Concentrado livre A", "concentrado", "energetico")
+        volumoso_livre = self._criar_ingrediente("Volumoso livre", "volumoso", "silagens")
+        linha_travada = IngredienteFormulacao.objects.create(
+            formulacao=self.formulacao,
+            ingrediente=volumoso,
+            ms_porcent=20.0,
+            origem_participacao=OrigemParticipacaoChoices.MANUAL_TRAVADA,
+        )
+        IngredienteFormulacao.objects.create(
+            formulacao=self.formulacao,
+            ingrediente=concentrado_a,
+            ms_porcent=40.0,
+        )
+        IngredienteFormulacao.objects.create(
+            formulacao=self.formulacao,
+            ingrediente=volumoso_livre,
+            ms_porcent=40.0,
+        )
+        ConfiguracaoNutriente.objects.filter(
+            exigencia_configurada=self.exigencia
+        ).update(alterado_pelo_usuario=False)
+
+        with patch(
+            "formulacao.services.atualizar_percentual_volumoso_service."
+            "RecalcularFormulacaoService.executar"
+        ):
+            AtualizarPercentualVolumosoService.executar(
+                formulacao_id=self.formulacao.id,
+                modo_percentual_volumoso="OTIMIZADO_PELO_SISTEMA",
+            )
+
+        self.formulacao.refresh_from_db()
+        linha_travada.refresh_from_db()
+        assert self.formulacao.modo_percentual_volumoso == (
+            ModoPercentualVolumoso.OTIMIZADO_PELO_SISTEMA
+        )
+        assert self.formulacao.percentual_alvo_volumoso is None
+        assert self.formulacao.origem_percentual_volumoso == (
+            OrigemPercentualVolumoso.SISTEMA
+        )
+        assert linha_travada.ms_porcent == 20.0
+        assert sum(
+            self.formulacao.ingredientes_formulacao.values_list(
+                "ms_porcent", flat=True
+            )
+        ) == pytest.approx(100.0, abs=1e-8)
+
+        with patch(
+            "formulacao.services.atualizar_percentual_volumoso_service."
+            "RecalcularFormulacaoService.executar"
+        ):
+            AtualizarPercentualVolumosoService.executar(
+                formulacao_id=self.formulacao.id,
+                modo_percentual_volumoso="FIXADO_PELO_USUARIO",
+                percentual_alvo_volumoso=0.30,
+            )
+
+        self.formulacao.refresh_from_db()
+        linha_travada.refresh_from_db()
+        assert self.formulacao.percentual_alvo_volumoso == 0.30
+        assert self.formulacao.percentual_volumoso_aplicado == pytest.approx(0.30)
+        assert linha_travada.ms_porcent == 20.0
+
+    def test_snapshot_v4_restaura_modo_automatico_e_origem_sistema(self):
+        volumoso = self._criar_ingrediente("Volumoso snapshot", "volumoso", "silagens")
+        concentrado = self._criar_ingrediente("Concentrado snapshot", "concentrado", "energetico")
+        linha_vol = IngredienteFormulacao.objects.create(
+            formulacao=self.formulacao,
+            ingrediente=volumoso,
+            ms_porcent=20.0,
+        )
+        linha_conc = IngredienteFormulacao.objects.create(
+            formulacao=self.formulacao,
+            ingrediente=concentrado,
+            ms_porcent=80.0,
+        )
+        exigencia_snapshot = {
+            "cms_kg": 1.2,
+            "exigencia_nrc_origem_id": self.origem_antiga.id,
+            "configuracoes": [{
+                "nutriente": "PB",
+                "operador": ">=",
+                "valor_min": 14.0,
+                "valor_max": None,
+                "valor_origem_nrc": 14.0,
+                "alterado_pelo_usuario": False,
+            }],
+        }
+        SnapshotFormulacao.objects.create(
+            formulacao=self.formulacao,
+            versao_num=2,
+            payload={
+                "schema_version": 4,
+                "participacoes": [
+                    {"id": linha_vol.id, "fracao": 0.20, "origem": "CALCULADA"},
+                    {"id": linha_conc.id, "fracao": 0.80, "origem": "CALCULADA"},
+                ],
+                "modo_percentual_volumoso": "OTIMIZADO_PELO_SISTEMA",
+                "percentual_alvo_volumoso": None,
+                "percentual_volumoso_aplicado": 0.20,
+                "origem_percentual_volumoso": "SISTEMA",
+                "exigencia_configurada": exigencia_snapshot,
+            },
+        )
+
+        with patch(
+            "formulacao.services.restaurar_versao_service."
+            "RecalcularFormulacaoService.executar"
+        ):
+            RestaurarVersaoService.executar(self.formulacao.id, 2)
+
+        self.formulacao.refresh_from_db()
+        assert self.formulacao.modo_percentual_volumoso == (
+            ModoPercentualVolumoso.OTIMIZADO_PELO_SISTEMA
+        )
+        assert self.formulacao.percentual_alvo_volumoso is None
+        assert self.formulacao.percentual_volumoso_aplicado == 0.20
+        assert self.formulacao.origem_percentual_volumoso == (
+            OrigemPercentualVolumoso.SISTEMA
+        )
+
+    def test_geracao_inicial_persiste_vinte_por_cento_fixado_no_snapshot(self):
+        ConfiguracaoNutriente.objects.filter(
+            exigencia_configurada=self.exigencia
+        ).delete()
+        ConfiguracaoNutriente.objects.create(
+            exigencia_configurada=self.exigencia,
+            nutriente="PB",
+            operador=">=",
+            valor_min=0.0,
+            alterado_pelo_usuario=True,
+        )
+        volumoso = self._criar_ingrediente("Volumoso inicial", "volumoso", "silagens")
+        concentrado = self._criar_ingrediente("Concentrado inicial", "concentrado", "energetico")
+
+        GerarFormulacaoInicialService.executar(
+            formulacao_id=self.formulacao.id,
+            ingrediente_ids=[volumoso.id, concentrado.id],
+            modo_percentual_volumoso="FIXADO_PELO_USUARIO",
+            percentual_alvo_volumoso=0.20,
+        )
+
+        self.formulacao.refresh_from_db()
+        participacoes = list(
+            self.formulacao.ingredientes_formulacao.order_by("id")
+            .values_list("ms_porcent", flat=True)
+        )
+        snapshot = self.formulacao.snapshots.order_by("-versao_num").first()
+        assert self.formulacao.status == StatusFormulacao.ATIVA
+        assert participacoes == pytest.approx([20.0, 80.0], abs=1e-8)
+        assert sum(participacoes) == pytest.approx(100.0, abs=1e-8)
+        assert self.formulacao.percentual_alvo_volumoso == 0.20
+        assert self.formulacao.percentual_volumoso_aplicado == pytest.approx(0.20)
+        assert snapshot.payload["schema_version"] == 4
+        assert snapshot.payload["modo_percentual_volumoso"] == "FIXADO_PELO_USUARIO"
+        assert snapshot.payload["percentual_volumoso_aplicado"] == pytest.approx(0.20)
+
+    def test_geracao_inicial_automatica_persiste_zero_volumoso_e_cem_concentrado(self):
+        ConfiguracaoNutriente.objects.filter(
+            exigencia_configurada=self.exigencia
+        ).delete()
+        ConfiguracaoNutriente.objects.create(
+            exigencia_configurada=self.exigencia,
+            nutriente="PB",
+            operador=">=",
+            valor_min=20.0,
+            alterado_pelo_usuario=True,
+        )
+        volumoso = self._criar_ingrediente("Volumoso zero", "volumoso", "silagens")
+        concentrado = self._criar_ingrediente("Concentrado cem", "concentrado", "energetico")
+        volumoso.pb = 0.0
+        volumoso.save(update_fields=["pb"])
+        concentrado.pb = 20.0
+        concentrado.save(update_fields=["pb"])
+
+        GerarFormulacaoInicialService.executar(
+            formulacao_id=self.formulacao.id,
+            ingrediente_ids=[volumoso.id, concentrado.id],
+            modo_percentual_volumoso="OTIMIZADO_PELO_SISTEMA",
+        )
+
+        self.formulacao.refresh_from_db()
+        linhas = list(
+            self.formulacao.ingredientes_formulacao.select_related("ingrediente")
+            .order_by("id")
+        )
+        assert [linha.ms_porcent for linha in linhas] == pytest.approx(
+            [0.0, 100.0], abs=1e-8
+        )
+        assert self.formulacao.percentual_alvo_volumoso is None
+        assert self.formulacao.percentual_volumoso_aplicado == pytest.approx(0.0)
+        assert self.formulacao.origem_percentual_volumoso == (
+            OrigemPercentualVolumoso.SISTEMA
+        )
 
     @staticmethod
     def _criar_ingrediente(nome: str, classificacao: str, tipo: str) -> Ingrediente:
