@@ -245,6 +245,101 @@ class DadosDietaAPITests(APITestCase):
             )
             self.assertEqual(erro.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_patch_persiste_quantidade_e_devolve_mistura_atualizada(self):
+        """A escrita salva a quantidade e já retorna o total derivado solicitado."""
+        snapshots_antes = SnapshotFormulacao.objects.filter(
+            formulacao=self.formulacao
+        ).count()
+        eventos_antes = EventoFormulacao.objects.filter(
+            formulacao=self.formulacao
+        ).count()
+        resposta = self.client.patch(
+            self.url,
+            {"quantidade_mistura_mn_kg": 4200},
+            format="json",
+        )
+
+        self.assertEqual(resposta.status_code, status.HTTP_200_OK)
+        self.formulacao.refresh_from_db()
+        self.assertEqual(self.formulacao.quantidade_mistura_mn_kg, 4200.0)
+        self.assertEqual(resposta.data["quantidade_mistura_mn_kg"], 4200.0)
+        self.assertEqual(
+            resposta.data["mistura_concentrada"]["totais"][
+                "mn_kg_para_quantidade"
+            ],
+            4200.0,
+        )
+
+        reaberta = self.client.get(self.url)
+        self.assertEqual(reaberta.status_code, status.HTTP_200_OK)
+        self.assertEqual(reaberta.data["quantidade_mistura_mn_kg"], 4200.0)
+
+        editada = self.client.patch(
+            self.url,
+            {"quantidade_mistura_mn_kg": 3500},
+            format="json",
+        )
+        self.assertEqual(editada.status_code, status.HTTP_200_OK)
+        self.formulacao.refresh_from_db()
+        self.assertEqual(self.formulacao.quantidade_mistura_mn_kg, 3500.0)
+        detalhe = self.client.get(
+            reverse("formulacao-detail", args=[self.formulacao.pk])
+        )
+        self.assertEqual(detalhe.data["quantidade_mistura_mn_kg"], 3500.0)
+        self.assertEqual(
+            SnapshotFormulacao.objects.filter(formulacao=self.formulacao).count(),
+            snapshots_antes,
+        )
+        self.assertEqual(
+            EventoFormulacao.objects.filter(formulacao=self.formulacao).count(),
+            eventos_antes,
+        )
+
+    def test_query_override_nao_substitui_quantidade_persistida(self):
+        """O contrato GET anterior continua momentâneo e retrocompatível."""
+        self.formulacao.quantidade_mistura_mn_kg = 500.0
+        self.formulacao.save(update_fields=["quantidade_mistura_mn_kg"])
+
+        resposta = self.client.get(
+            self.url,
+            {"quantidade_mistura_mn_kg": 300},
+        )
+
+        self.assertEqual(resposta.status_code, status.HTTP_200_OK)
+        self.assertEqual(resposta.data["quantidade_mistura_mn_kg"], 300.0)
+        self.formulacao.refresh_from_db()
+        self.assertEqual(self.formulacao.quantidade_mistura_mn_kg, 500.0)
+
+    def test_patch_rejeita_quantidade_invalida_sem_alterar_valor_salvo(self):
+        """Valores inválidos retornam 400 e preservam a última quantidade válida."""
+        self.formulacao.quantidade_mistura_mn_kg = 500.0
+        self.formulacao.save(update_fields=["quantidade_mistura_mn_kg"])
+
+        for invalido in (0, -1, "abc", "inf"):
+            resposta = self.client.patch(
+                self.url,
+                {"quantidade_mistura_mn_kg": invalido},
+                format="json",
+            )
+            self.assertEqual(resposta.status_code, status.HTTP_400_BAD_REQUEST)
+
+        self.formulacao.refresh_from_db()
+        self.assertEqual(self.formulacao.quantidade_mistura_mn_kg, 500.0)
+
+    def test_patch_de_outro_usuario_nao_altera_quantidade(self):
+        """A escrita usa a mesma proteção de propriedade do GET."""
+        self.client.force_authenticate(self.outra_conta)
+
+        resposta = self.client.patch(
+            self.url,
+            {"quantidade_mistura_mn_kg": 4200},
+            format="json",
+        )
+
+        self.assertEqual(resposta.status_code, status.HTTP_404_NOT_FOUND)
+        self.formulacao.refresh_from_db()
+        self.assertIsNone(self.formulacao.quantidade_mistura_mn_kg)
+
     def test_concentrado_com_zero_aparece_e_preco_ausente_e_explicito(self):
         resposta = self.client.get(self.url)
 

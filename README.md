@@ -201,13 +201,9 @@ Os apps do backend têm responsabilidades bem separadas:
 #### Dados da Dieta
 | Método | Endpoint | Descrição |
 |--------|----------|-----------|
-| `GET` | `/api/formulacoes/{id}/dados-dieta/` | Agrega dieta detalhada, resumo por classificação, mistura concentrada e comparação nutricional do último snapshot. |
+| `GET` | `/api/formulacoes/{id}/dados-dieta/` | Agrega dieta detalhada, resumo por classificação, mistura concentrada e comparação nutricional do último snapshot, usando a quantidade salva. |
+| `PATCH` | `/api/formulacoes/{id}/dados-dieta/` | Salva `quantidade_mistura_mn_kg` e devolve imediatamente os blocos derivados atualizados. |
 
-O parâmetro opcional `quantidade_mistura_mn_kg` informa quantos quilogramas de
-**matéria natural (MN)** da mistura concentrada serão preparados. Ele precisa ser
-finito e maior que zero, não possui valor padrão e não é persistido. Quando não é
-informado, `quantidade_mistura_mn_kg` e a coluna derivada para essa quantidade
-retornam `null`; os demais blocos continuam sendo calculados.
 
 
 #### Custos e Viabilidade

@@ -10,19 +10,42 @@ from formulacao.api.serializers import DesvioOutputSerializer
 
 
 class DadosDietaQuerySerializer(serializers.Serializer):
-    """Valida a quantidade momentânea da mistura na matéria natural."""
+    """Valida um override momentâneo da quantidade salva na formulação."""
 
     quantidade_mistura_mn_kg = serializers.FloatField(
         required=False,
         allow_null=True,
         help_text=(
-            "Quantidade total da mistura concentrada a preparar, em kg de MN. "
-            "Não é persistida."
+            "Override opcional da quantidade salva, em kg de MN. "
+            "Afeta somente esta consulta e não é persistido."
         ),
     )
 
     def validate_quantidade_mistura_mn_kg(self, valor):
         """Rejeita zero, negativos e representações não finitas."""
+        if valor is None:
+            return None
+        if not math.isfinite(valor) or valor <= 0:
+            raise serializers.ValidationError(
+                "Informe um valor finito e maior que zero."
+            )
+        return valor
+
+
+class AtualizarQuantidadeMisturaInputSerializer(serializers.Serializer):
+    """Valida a quantidade persistida da mistura concentrada em kg de MN."""
+
+    quantidade_mistura_mn_kg = serializers.FloatField(
+        required=True,
+        allow_null=True,
+        help_text=(
+            "Quantidade de matéria natural da mistura concentrada a preparar. "
+            "Use null para limpar o valor salvo."
+        ),
+    )
+
+    def validate_quantidade_mistura_mn_kg(self, valor):
+        """Aceita vazio ou um valor finito estritamente positivo."""
         if valor is None:
             return None
         if not math.isfinite(valor) or valor <= 0:

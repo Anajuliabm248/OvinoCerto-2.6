@@ -503,6 +503,7 @@ class FormulacaoDetailSerializer(
             "id", "lote", "lote_nome", "usuario", "titulo", "observacoes",
             "status", "modo_percentual_volumoso", "percentual_alvo_volumoso",
             "percentual_volumoso_aplicado", "origem_percentual_volumoso",
+            "quantidade_mistura_mn_kg",
             "adequacao_nutricional_completa", "desvios_nutricionais",
             "dt_inc", "dt_alt", "exigencias", "ingredientes",
         ]

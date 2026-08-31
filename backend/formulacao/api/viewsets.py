@@ -34,6 +34,7 @@ from drf_spectacular.utils import OpenApiExample, extend_schema
 from formulacao.api.listagem_exigencias_nrc import listar_sugeridas, listar_todas
 from formulacao.api.listagem_ingredientes import listar_ingredientes_disponiveis
 from formulacao.api.dados_dieta_serializers import (
+    AtualizarQuantidadeMisturaInputSerializer,
     DadosDietaOutputSerializer,
     DadosDietaQuerySerializer,
 )
@@ -81,6 +82,7 @@ from formulacao.services import (
     AtualizarPercentualVolumosoService,
     AtualizarParametrosViabilidadeService,
     AtualizarPrecoIngredienteService,
+    AtualizarQuantidadeMisturaService,
     CalcularDadosDietaService,
     CalcularViabilidadeService,
     DadosDietaNaoCalculadosError,
@@ -112,6 +114,7 @@ _INPUT_SERIALIZER_MAP = {
     "ajustar_ingrediente":   AjustarParticipacaoInputSerializer,
     "atualizar_preco_ingrediente": AtualizarPrecoInputSerializer,
     "atualizar_parametros_viabilidade": AtualizarParametrosViabilidadeInputSerializer,
+    "atualizar_quantidade_mistura": AtualizarQuantidadeMisturaInputSerializer,
 }
 
 
@@ -164,6 +167,7 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
     POST   /formulacoes/{id}/recalcular/
     GET    /formulacoes/{id}/resultado/
     GET    /formulacoes/{id}/dados-dieta/
+    PATCH  /formulacoes/{id}/dados-dieta/
     GET    /formulacoes/{id}/custos/
     GET    /formulacoes/{id}/viabilidade/
     PATCH  /formulacoes/{id}/viabilidade/parametros/
@@ -672,14 +676,14 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
         examples=[
             OpenApiExample(
                 "Preparar 4200 kg de mistura na matéria natural",
-                value={"quantidade_mistura_mn_kg": 4200.0},
+                value=4200.0,
                 parameter_only=("quantidade_mistura_mn_kg", "query"),
             ),
         ],
         description=(
-            "Compõe os Quadros 6, 6.1, 6.2 e 7 sem recalcular nem persistir. "
-            "A quantidade opcional está em kg de matéria natural; quando omitida, "
-            "os demais blocos continuam disponíveis."
+            "Compõe os Quadros 1, 1.1, 1.2 e 2 sem recalcular a formulação. "
+            "Quando o override opcional não é informado, usa a quantidade "
+            "persistida na formulação."
         ),
     )
     @action(detail=True, methods=["get"], url_path="dados-dieta")
@@ -694,6 +698,47 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
                 quantidade_mistura_mn_kg=consulta.validated_data.get(
                     "quantidade_mistura_mn_kg"
                 ),
+            )
+        except DadosDietaNaoCalculadosError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(DadosDietaOutputSerializer(payload).data)
+
+    @extend_schema(
+        request=AtualizarQuantidadeMisturaInputSerializer,
+        responses={200: DadosDietaOutputSerializer},
+        examples=[
+            OpenApiExample(
+                "Salvar 4200 kg de mistura na matéria natural",
+                value={"quantidade_mistura_mn_kg": 4200.0},
+                request_only=True,
+            ),
+        ],
+        description=(
+            "Persiste a quantidade de mistura concentrada em kg de matéria "
+            "natural e devolve imediatamente os Quadros 1, 1.1, 1.2 e 2 "
+            "atualizados, sem alterar participações ou gerar snapshot."
+        ),
+    )
+    @dados_dieta.mapping.patch
+    def atualizar_quantidade_mistura(self, request, pk=None):
+        """PATCH /formulacoes/{id}/dados-dieta/ — salva e atualiza a saída."""
+        self._get_formulacao(request, pk)
+        entrada = self.get_serializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        try:
+            payload = AtualizarQuantidadeMisturaService.executar(
+                formulacao_id=int(pk),
+                quantidade_mistura_mn_kg=entrada.validated_data[
+                    "quantidade_mistura_mn_kg"
+                ],
             )
         except DadosDietaNaoCalculadosError as exc:
             return Response(

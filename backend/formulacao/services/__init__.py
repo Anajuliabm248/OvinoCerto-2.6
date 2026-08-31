@@ -19,6 +19,7 @@ from .calcular_dados_dieta_service import (
     DadosDietaNaoCalculadosError,
 )
 from .atualizar_parametros_viabilidade_service import AtualizarParametrosViabilidadeService
+from .atualizar_quantidade_mistura_service import AtualizarQuantidadeMisturaService
 
 __all__ = [
     'AdicionarIngredienteService',
@@ -38,4 +39,5 @@ __all__ = [
     'CalcularDadosDietaService',
     'DadosDietaNaoCalculadosError',
     'AtualizarParametrosViabilidadeService',
+    'AtualizarQuantidadeMisturaService',
 ]

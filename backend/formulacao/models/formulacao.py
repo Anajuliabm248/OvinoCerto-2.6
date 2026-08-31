@@ -126,6 +126,15 @@ class Formulacao(models.Model):
     custo_ms_kg = models.FloatField(null=True, blank=True, verbose_name="Custo (R$/kg MS)")
     custo_animal_dia = models.FloatField(null=True, blank=True, verbose_name="Custo (R$/animal/dia)")
     custo_lote_dia = models.FloatField(null=True, blank=True, verbose_name="Custo (R$/lote/dia)")
+    quantidade_mistura_mn_kg = models.FloatField(
+        null=True,
+        blank=True,
+        verbose_name="Quantidade da mistura concentrada (kg MN)",
+        help_text=(
+            "Quantidade persistida de matéria natural da mistura concentrada "
+            "a preparar. Deve ser maior que zero quando informada."
+        ),
+    )
 
     class Meta:
         '''configs do BD'''
@@ -169,6 +178,13 @@ class Formulacao(models.Model):
                     percentual_volumoso_aplicado__lte=1.0,
                 ),
                 name="formulacao_aplicado_volumoso_0_1",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(quantidade_mistura_mn_kg__isnull=True)
+                    | models.Q(quantidade_mistura_mn_kg__gt=0.0)
+                ),
+                name="formulacao_quantidade_mistura_mn_positiva",
             ),
         ]
 

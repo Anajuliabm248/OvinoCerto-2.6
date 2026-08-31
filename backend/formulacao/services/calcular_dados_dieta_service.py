@@ -29,7 +29,13 @@ class CalcularDadosDietaService:
             "custo_ms_kg",
             "custo_animal_dia",
             "custo_lote_dia",
+            "quantidade_mistura_mn_kg",
         ).get(pk=formulacao_id)
+        quantidade_efetiva_mn_kg = (
+            quantidade_mistura_mn_kg
+            if quantidade_mistura_mn_kg is not None
+            else formulacao.quantidade_mistura_mn_kg
+        )
         linhas = IngredienteFormulacaoRepository.get_linhas_dados_dieta(
             formulacao_id
         )
@@ -54,7 +60,7 @@ class CalcularDadosDietaService:
 
         saida = MotorDadosDieta.calcular(EntradaDadosDieta(
             linhas=linhas,
-            quantidade_mistura_mn_kg=quantidade_mistura_mn_kg,
+            quantidade_mistura_mn_kg=quantidade_efetiva_mn_kg,
         ))
         tem_sem_preco = any(
             linha.preco_kg_mn is None
@@ -84,7 +90,7 @@ class CalcularDadosDietaService:
         return {
             "formulacao_id": formulacao.id,
             "versao_num": snapshot.versao_num,
-            "quantidade_mistura_mn_kg": quantidade_mistura_mn_kg,
+            "quantidade_mistura_mn_kg": quantidade_efetiva_mn_kg,
             "dieta": {
                 "linhas": saida.linhas_dieta,
                 "totais": dieta_totais,
