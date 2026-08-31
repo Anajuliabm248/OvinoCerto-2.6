@@ -41,6 +41,7 @@ O **OvinoCerto** é uma aplicação web voltada para a otimização e automatiza
       - [Fluxo Principal \& Criação](#fluxo-principal--criação)
       - [Gestão de Ingredientes na Dieta](#gestão-de-ingredientes-na-dieta)
       - [Metas (Exigências) e Recálculo](#metas-exigências-e-recálculo)
+      - [Dados da Dieta](#dados-da-dieta)
       - [Custos e Viabilidade](#custos-e-viabilidade)
       - [Histórico, Versões e Auditoria (Snapshots)](#histórico-versões-e-auditoria-snapshots)
 
@@ -196,6 +197,18 @@ Os apps do backend têm responsabilidades bem separadas:
 | `PATCH` | `/api/formulacoes/{id}/exigencia/{nutriente}/` | Personaliza a meta de um nutriente na dieta usando operadores lógicos (`>`, `<`, `=`, `ENTRE`). |
 | `POST` | `/api/formulacoes/{id}/recalcular/` | Aciona o recálculo do balanceamento da ração após alterações na configuração. |
 | `GET`  | `/api/formulacoes/{id}/resultado/` | Traz a análise e o resultado final da eficácia da dieta montada. |
+
+#### Dados da Dieta
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| `GET` | `/api/formulacoes/{id}/dados-dieta/` | Agrega dieta detalhada, resumo por classificação, mistura concentrada e comparação nutricional do último snapshot. |
+
+O parâmetro opcional `quantidade_mistura_mn_kg` informa quantos quilogramas de
+**matéria natural (MN)** da mistura concentrada serão preparados. Ele precisa ser
+finito e maior que zero, não possui valor padrão e não é persistido. Quando não é
+informado, `quantidade_mistura_mn_kg` e a coluna derivada para essa quantidade
+retornam `null`; os demais blocos continuam sendo calculados.
+
 
 #### Custos e Viabilidade
 | Método | Endpoint | Descrição |

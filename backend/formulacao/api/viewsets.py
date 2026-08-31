@@ -33,6 +33,10 @@ from drf_spectacular.utils import OpenApiExample, extend_schema
 
 from formulacao.api.listagem_exigencias_nrc import listar_sugeridas, listar_todas
 from formulacao.api.listagem_ingredientes import listar_ingredientes_disponiveis
+from formulacao.api.dados_dieta_serializers import (
+    DadosDietaOutputSerializer,
+    DadosDietaQuerySerializer,
+)
 from formulacao.api.serializers import (
     AdicionarIngredienteInputSerializer,
     AjustarParticipacaoInputSerializer,
@@ -77,7 +81,9 @@ from formulacao.services import (
     AtualizarPercentualVolumosoService,
     AtualizarParametrosViabilidadeService,
     AtualizarPrecoIngredienteService,
+    CalcularDadosDietaService,
     CalcularViabilidadeService,
+    DadosDietaNaoCalculadosError,
     GerarFormulacaoInicialService,
     IniciarFormulacaoService,
     ReadequarFormulacaoService,
@@ -157,6 +163,7 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
     ---------------------
     POST   /formulacoes/{id}/recalcular/
     GET    /formulacoes/{id}/resultado/
+    GET    /formulacoes/{id}/dados-dieta/
     GET    /formulacoes/{id}/custos/
     GET    /formulacoes/{id}/viabilidade/
     PATCH  /formulacoes/{id}/viabilidade/parametros/
@@ -658,6 +665,47 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
             "vetor_total": snapshot.payload.get("vetor_total", {}),
             "alertas":     AlertaSerializer(alertas_ativos, many=True).data,
         })
+
+    @extend_schema(
+        parameters=[DadosDietaQuerySerializer],
+        responses={200: DadosDietaOutputSerializer},
+        examples=[
+            OpenApiExample(
+                "Preparar 4200 kg de mistura na matéria natural",
+                value={"quantidade_mistura_mn_kg": 4200.0},
+                parameter_only=("quantidade_mistura_mn_kg", "query"),
+            ),
+        ],
+        description=(
+            "Compõe os Quadros 6, 6.1, 6.2 e 7 sem recalcular nem persistir. "
+            "A quantidade opcional está em kg de matéria natural; quando omitida, "
+            "os demais blocos continuam disponíveis."
+        ),
+    )
+    @action(detail=True, methods=["get"], url_path="dados-dieta")
+    def dados_dieta(self, request, pk=None):
+        """GET /formulacoes/{id}/dados-dieta/ — fachada somente leitura."""
+        self._get_formulacao(request, pk)
+        consulta = DadosDietaQuerySerializer(data=request.query_params)
+        consulta.is_valid(raise_exception=True)
+        try:
+            payload = CalcularDadosDietaService.executar(
+                formulacao_id=int(pk),
+                quantidade_mistura_mn_kg=consulta.validated_data.get(
+                    "quantidade_mistura_mn_kg"
+                ),
+            )
+        except DadosDietaNaoCalculadosError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(DadosDietaOutputSerializer(payload).data)
 
     # ------------------------------------------------------------------
     # Indicadores de custo
