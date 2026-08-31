@@ -7,6 +7,7 @@ from .atualizar_percentual_volumoso_service import AtualizarPercentualVolumosoSe
 from .gerar_formulacao_inicial_service import GerarFormulacaoInicialService
 from .iniciar_formulacao_service import IniciarFormulacaoService
 from .recalcular_formulacao_service import RecalcularFormulacaoService
+from .readequar_formulacao_service import ReadequarFormulacaoService
 from .remover_ingrediente_service import RemoverIngredienteService
 from .sugerir_ingredientes_service import SugerirIngredientesService
 from .restaurar_versao_service import RestaurarVersaoService
@@ -23,6 +24,7 @@ __all__ = [
     'GerarFormulacaoInicialService',
     'IniciarFormulacaoService',
     'RecalcularFormulacaoService',
+    'ReadequarFormulacaoService',
     'RemoverIngredienteService',
     'SugerirIngredientesService',
     'RestaurarVersaoService',

@@ -80,7 +80,7 @@ from formulacao.services import (
     CalcularViabilidadeService,
     GerarFormulacaoInicialService,
     IniciarFormulacaoService,
-    RecalcularFormulacaoService,
+    ReadequarFormulacaoService,
     RemoverIngredienteService,
     RestaurarVersaoService,
     SugerirIngredientesService,
@@ -614,17 +614,17 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
         """
         POST /formulacoes/{id}/recalcular/
 
-        recalcula sem alterar participações.
-        Útil após mudar exigências configuradas sem redistribuir.
+        Rebalanceia os ingredientes livres contra a exigência vigente e,
+        em seguida, recalcula nutrientes, custos, alertas e snapshot.
+        Participações MANUAL_TRAVADA permanecem inalteradas.
         """
         self._get_formulacao(request, pk)
 
         try:
             perfil = self._perfil(request)
-            RecalcularFormulacaoService.executar(
+            ReadequarFormulacaoService.executar(
                 formulacao_id=int(pk),
                 usuario_id   =perfil.id if perfil else None,
-                motivo       ="recálculo explícito",
             )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
