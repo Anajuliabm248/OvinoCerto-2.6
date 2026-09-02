@@ -11,6 +11,7 @@ from django.db.models.functions import Lower
 
 from accounts.models import Usuario
 from .models import (
+    CAMPOS_LIMITES_PARTICIPACAO,
     Ingrediente,
     CLASSIFICACAO_CHOICES,
     TIPO_CHOICES,
@@ -36,7 +37,8 @@ class IngredienteViewSet(viewsets.ModelViewSet):
     - GET  /api/ingredientes/meus/           → atalho: só custom do usuário
     - POST /api/ingredientes/               → cria ingrediente custom
     - PATCH /api/ingredientes/{id}/preco/        → atualiza preço do ingrediente (qualquer, Valadares incluso)
-    - PUT/PATCH /api/ingredientes/{id}/     → edita (só os próprios, não-Valadares)
+    - PUT/PATCH /api/ingredientes/{id}/     → edita ingredientes próprios
+    - PATCH /api/ingredientes/{id}/         → administrador edita limites Valadares
     - DELETE /api/ingredientes/{id}/        → exclui (só os próprios, não-Valadares)
     """
     serializer_class = IngredienteSerializer
@@ -55,6 +57,11 @@ class IngredienteViewSet(viewsets.ModelViewSet):
             raise PermissionDenied(
                 'Complete seu perfil antes de alterar ingredientes.'
             ) from exc
+
+    def get_serializer_class(self):
+        if self.action == 'preco':
+            return AtualizarPrecoCatalogoInputSerializer
+        return super().get_serializer_class()
 
     # Queryset: Valadares (públicos) + ingredientes do usuário logado
     def get_queryset(self):
@@ -132,11 +139,27 @@ class IngredienteViewSet(viewsets.ModelViewSet):
         )
 
 
-    # Protege edição/exclusão: apenas ingredientes custom do próprio usuário
-    def _verificar_propriedade(self, instance):
-        """Bloqueia alterações no catálogo público ou em itens de outro usuário."""
+    # Protege edição/exclusão e mantém a composição Valadares imutável
+    def _verificar_propriedade(self, instance, campos_solicitados=None):
+        """Autoriza somente administradores a editar limites globais Valadares."""
         if instance.fonte_valadares:
-            raise PermissionDenied('Ingredientes Valadares não podem ser alterados.')
+            usuario_admin = (
+                self.request.user.is_staff or self.request.user.is_superuser
+            )
+            somente_limites = (
+                campos_solicitados
+                and set(campos_solicitados) <= CAMPOS_LIMITES_PARTICIPACAO
+            )
+            if (
+                self.request.method.lower() == 'patch'
+                and usuario_admin
+                and somente_limites
+            ):
+                return
+            raise PermissionDenied(
+                'Somente administradores podem alterar os limites mínimo e '
+                'máximo de ingredientes Valadares.'
+            )
         if self.request.user.is_staff or self.request.user.is_superuser:
             return
         perfil = self._perfil_obrigatorio()
@@ -147,7 +170,7 @@ class IngredienteViewSet(viewsets.ModelViewSet):
         """Atualiza a rota padrão com autorização e o contrato parcial da interface."""
         partial = kwargs.pop('partial', False)
         instance = self.get_object()
-        self._verificar_propriedade(instance)
+        self._verificar_propriedade(instance, request.data.keys())
         data = self._limpar_campos_vazios_patch(request.data) if partial else request.data
         serializer = self.get_serializer(instance, data=data, partial=partial)
         serializer.is_valid(raise_exception=True)
@@ -211,6 +234,7 @@ class IngredienteViewSet(viewsets.ModelViewSet):
             'classificacoes': [{'value': v, 'label': l} for v, l in CLASSIFICACAO_CHOICES],
             'tipos':          [{'value': v, 'label': l} for v, l in TIPO_CHOICES],
         })
+
     # PATCH /api/ingredientes/{id}/preco/
     @action(detail=True, methods=['patch'], url_path='preco')
     def preco(self, request, pk=None):

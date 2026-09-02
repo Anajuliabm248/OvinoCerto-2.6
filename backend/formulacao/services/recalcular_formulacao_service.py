@@ -41,7 +41,12 @@ from formulacao.domain.nutrientes import NUTRIENTES_ORDEM
 from formulacao.engines.motor_alertas import MotorAlertas, ParticipacaoIngredienteLimite
 from formulacao.engines.motor_custo import EntradaCusto, MotorCusto, SaidaCusto
 from formulacao.engines.motor_recalculo import EntradaRecalculo, MotorRecalculo, SaidaRecalculo
-from formulacao.models import Formulacao, TipoEvento
+from formulacao.models import (
+    Formulacao,
+    ModoPercentualVolumoso,
+    OrigemPercentualVolumoso,
+    TipoEvento,
+)
 from formulacao.repositories import (
     AlertaRepository,
     EventoRepository,
@@ -83,9 +88,34 @@ class RecalcularFormulacaoService:
         requisitos     = ExigenciaRepository.get_requisitos(formulacao_id)
         cms_kg         = ExigenciaRepository.get_cms_kg(formulacao_id)
         exigencia_payload = ExigenciaRepository.serializar_configuracao(formulacao_id)
-        percentual_alvo_volumoso = Formulacao.objects.values_list(
-            "percentual_alvo_volumoso", flat=True
+        formulacao = Formulacao.objects.only(
+            "modo_percentual_volumoso",
+            "percentual_alvo_volumoso",
+            "percentual_volumoso_aplicado",
+            "origem_percentual_volumoso",
         ).get(pk=formulacao_id)
+        percentual_aplicado = (
+            IngredienteFormulacaoRepository.get_percentual_volumoso_aplicado(
+                formulacao_id
+            )
+        )
+        origem_percentual = (
+            OrigemPercentualVolumoso.USUARIO
+            if formulacao.modo_percentual_volumoso
+            == ModoPercentualVolumoso.FIXADO_PELO_USUARIO
+            else OrigemPercentualVolumoso.SISTEMA
+        )
+        if formulacao.modo_percentual_volumoso == ModoPercentualVolumoso.FIXADO_PELO_USUARIO:
+            if formulacao.percentual_alvo_volumoso is None:
+                raise ValueError(
+                    "Formulação em modo fixado sem percentual alvo configurado."
+                )
+            if abs(percentual_aplicado - formulacao.percentual_alvo_volumoso) > 1e-8:
+                raise ValueError(
+                    "Formulação inconsistente: o percentual efetivo de volumoso "
+                    f"e {percentual_aplicado * 100:.2f}%, mas o alvo fixado e "
+                    f"{formulacao.percentual_alvo_volumoso * 100:.2f}%."
+                )
 
         if not requisitos:
             raise ValueError(
@@ -143,6 +173,10 @@ class RecalcularFormulacaoService:
         # Passos 5-10: Persistência (atômica)
         
         with transaction.atomic():
+            Formulacao.objects.filter(pk=formulacao_id).update(
+                percentual_volumoso_aplicado=percentual_aplicado,
+                origem_percentual_volumoso=origem_percentual,
+            )
             # Passo 5: salvar campos calculados em IngredienteFormulacao
             IngredienteFormulacaoRepository.salvar_saida_recalculo(
                 formulacao_id=formulacao_id,
@@ -176,7 +210,10 @@ class RecalcularFormulacaoService:
                 resultado=saida.resultado.to_dict(),
                 vetor_total=saida.vetor_total.to_dict(),
                 cms_kg=cms_kg,
-                percentual_alvo_volumoso=percentual_alvo_volumoso,
+                modo_percentual_volumoso=formulacao.modo_percentual_volumoso,
+                percentual_alvo_volumoso=formulacao.percentual_alvo_volumoso,
+                percentual_volumoso_aplicado=percentual_aplicado,
+                origem_percentual_volumoso=origem_percentual,
                 exigencia_configurada=exigencia_payload,
                 alertas=alertas_dicts,
                 custos=_saida_custo_to_dict(saida_custo),
@@ -269,7 +306,10 @@ def _construir_payload(
     resultado: dict,
     vetor_total: dict,
     cms_kg: float,
-    percentual_alvo_volumoso: float,
+    modo_percentual_volumoso: str,
+    percentual_alvo_volumoso: float | None,
+    percentual_volumoso_aplicado: float,
+    origem_percentual_volumoso: str,
     exigencia_configurada: dict | None,
     alertas: list[dict],
     custos: dict | None,
@@ -283,17 +323,20 @@ def _construir_payload(
     mudar — permite que o front-end e os endpoints de histórico
     saibam como deserializar cada versão (seção 16 / risco 5).
 
-    schema_version passou de 2 para 3: snapshots antigos não contêm a
-    chave "percentual_alvo_volumoso". Neles, a restauração preserva o
-    alvo atual da formulação em vez de inventar um valor histórico.
+    schema_version 4 separa configuracao (modo/alvo) do resultado aplicado.
+    Snapshots v3 sao interpretados como modo fixado para preservar o
+    comportamento historico.
     """
     return {
-        "schema_version":   3,
+        "schema_version":   4,
         "formulacao_id":    formulacao_id,
         "motivo":           motivo,
         "usuario_id":       usuario_id,
         "cms_kg":           cms_kg,
+        "modo_percentual_volumoso": modo_percentual_volumoso,
         "percentual_alvo_volumoso": percentual_alvo_volumoso,
+        "percentual_volumoso_aplicado": percentual_volumoso_aplicado,
+        "origem_percentual_volumoso": origem_percentual_volumoso,
         "exigencia_configurada": exigencia_configurada,
         "participacoes":    participacao_dicts,
         "vetor_total":      vetor_total,

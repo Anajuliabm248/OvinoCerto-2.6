@@ -1,12 +1,13 @@
 """
 Model para os parâmetros de simulação de custo/viabilidade de uma
-formulação (Quadros 9-14 da planilha "Custos e Viabilidade da Dieta").
+formulação (Quadros 4-9 da planilha "Custos e Viabilidade da Dieta").
 
 1:1 com Formulacao — mesmo padrão de ExigenciaConfigurada. É uma
-CÓPIA editável, populada com defaults a partir de Lote/ExigenciaConfigurada
-na criação, mas nunca sincronizada de volta: editar estes valores serve
+CÓPIA editável. Quando o contexto da exigência corresponde ao lote, recebe
+defaults do lote; caso contrário, os campos herdados do lote iniciam em zero
+e o CMS da exigência é convertido para percentual. Editar estes valores serve
 só para simular cenários econômicos, nunca altera a formulação
-nutricional, o Lote ou a ExigenciaConfigurada (arquitetura, seção 15).
+nutricional, o Lote ou a ExigenciaConfigurada.
 
 cms_percentual_pv é DELIBERADAMENTE distinto de
 ExigenciaConfigurada.cms_kg — ver docstring de
@@ -32,7 +33,7 @@ class ParametrosViabilidade(models.Model):
         related_name="parametros_viabilidade",
     )
 
-    # Quadro 10 — Índices Zootécnicos (input)
+    # Quadro 5 — Índices Zootécnicos (input)
     num_animais = models.PositiveIntegerField(
         verbose_name="Número de Animais",
         help_text="Cópia editável de Lote.num_animais — não sincronizada.",
@@ -43,6 +44,7 @@ class ParametrosViabilidade(models.Model):
     )
     estimativa_permanencia_dias = models.PositiveIntegerField(
         verbose_name="Estimativa de permanência (dias)",
+        help_text="Tempo no confinamento.",
     )
     peso_entrada_kg = models.FloatField(
         verbose_name="Peso Vivo Real (Kg) na Entrada",
@@ -51,18 +53,22 @@ class ParametrosViabilidade(models.Model):
     cms_percentual_pv = models.FloatField(
         verbose_name="CMS (%) do peso vivo",
         help_text=(
-            "Fração 0-1 (ex.: 0.0297 = 2,97%). NÃO é ExigenciaConfigurada."
+            "Armazenado internamente como fração 0-1; a API recebe e devolve "
+            "percentual 0-100 (ex.: 2,97). NÃO é ExigenciaConfigurada."
             "cms_kg — é uma estimativa simplificada só para projeção de "
             "consumo/custo ao longo do período de confinamento."
         ),
     )
     perdas_alimentos_percentual = models.FloatField(
-        default=0.08,
+        default=0.1,
         verbose_name="Perdas de Alimentos (%)",
-        help_text="Fração 0-1 (ex.: 0.08 = 8%). Sobra/desperdício no cocho.",
+        help_text=(
+            "Armazenado internamente como fração 0-1; a API recebe e devolve "
+            "percentual 0-100 (ex.: 10). Sobra/desperdício no cocho."
+        ),
     )
 
-    # Quadro 13 — Valor (R$) obtido pelo Kg de PV
+    # Quadro 8 — Valor (R$) obtido pelo Kg de PV
     preco_venda_kg_pv = models.FloatField(
         null=True, blank=True,
         verbose_name="Preço de venda (R$/kg de PV)",

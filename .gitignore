@@ -12,9 +12,10 @@ static/
 media/
 base_ovino.xls
 pdf_frontend/
-diagramas/
 anotacoes.md
 reuniao.md
+agente_inteligente.md
+tmp/
 
 # Django stuff
 *.log

@@ -92,6 +92,475 @@ def test_gerar_distribuicao_respeita_alvo_volumoso_e_limites():
     assert all(resultado.fracoes[i] <= configuracoes[i].limite_max + 1e-9 for i in range(3))
 
 
+def test_modo_automatico_otimiza_volumoso_sem_ancora_de_cinquenta_por_cento():
+    matriz = np.zeros((2, N_NUTRIENTES), dtype=float)
+    matriz[:, indice_de(Nutriente.PB)] = [10.0, 20.0]
+    requisitos = {
+        Nutriente.PB: RequisitoNutriente.maior_igual(
+            Nutriente.PB,
+            18.0,
+            alterado_pelo_usuario=True,
+        )
+    }
+
+    resultado = MotorAdequacao.gerar_distribuicao_inicial(
+        matriz_M=matriz,
+        requisitos=requisitos,
+        configuracoes=[
+            ConfiguracaoIngrediente(classificacao="VOLUMOSO"),
+            ConfiguracaoIngrediente(classificacao="CONCENTRADO"),
+        ],
+        percentual_alvo_volumoso=None,
+    )
+
+    percentual_volumoso = float(resultado.fracoes[0])
+    assert resultado.convergiu
+    assert resultado.fracoes.sum() == pytest.approx(1.0, abs=1e-12)
+    assert percentual_volumoso <= 0.20 + 1e-8
+    assert percentual_volumoso != pytest.approx(0.50, abs=1e-3)
+
+
+def test_modo_automatico_nao_encarece_dieta_para_perseguir_meta_impossivel():
+    """P impossível não pode trocar fibra e custo por NDT desnecessário."""
+    matriz = np.array([
+        [7.27, 63.13, 55.27, 3.13, 0.30, 0.19, 0.0],
+        [9.10, 86.03, 14.39, 4.18, 0.03, 0.25, 0.0],
+        [48.76, 80.73, 15.37, 1.75, 0.33, 0.57, 0.0],
+        [0.00, 0.00, 0.00, 0.00, 37.02, 0.03, 0.0],
+        [280.0, 0.00, 0.00, 0.00, 0.00, 0.00, 0.0],
+    ], dtype=float)
+    configuracoes = [
+        ConfiguracaoIngrediente(
+            "VOLUMOSO", tipo="SILAGENS", custo_por_kg_ms=0.9
+        ),
+        ConfiguracaoIngrediente(
+            "CONCENTRADO", tipo="ENERGETICO", custo_por_kg_ms=2.3
+        ),
+        ConfiguracaoIngrediente(
+            "CONCENTRADO", tipo="PROTEICO", custo_por_kg_ms=3.4
+        ),
+        ConfiguracaoIngrediente(
+            "CONCENTRADO", tipo="MINERAL", custo_por_kg_ms=0.2
+        ),
+        ConfiguracaoIngrediente(
+            "CONCENTRADO",
+            tipo="PROTEICO",
+            limite_max=0.01,
+            custo_por_kg_ms=1.5,
+        ),
+    ]
+    requisitos = {
+        Nutriente.PB: RequisitoNutriente.igual(
+            Nutriente.PB, 18.70, valor_origem_nrc=18.70
+        ),
+        Nutriente.NDT: RequisitoNutriente.maior_igual(
+            Nutriente.NDT, 65.6566, valor_origem_nrc=65.6566
+        ),
+        Nutriente.FDN: RequisitoNutriente.maior_igual(
+            Nutriente.FDN, 30.0, valor_origem_nrc=30.0
+        ),
+        Nutriente.EE: RequisitoNutriente.menor_igual(
+            Nutriente.EE, 7.0, valor_origem_nrc=7.0
+        ),
+        Nutriente.CA: RequisitoNutriente.maior_igual(
+            Nutriente.CA, 0.6229, valor_origem_nrc=0.6229
+        ),
+        Nutriente.P: RequisitoNutriente.maior_igual(
+            Nutriente.P, 0.420875, valor_origem_nrc=0.420875
+        ),
+        Nutriente.CA_P: RequisitoNutriente.maior_igual(
+            Nutriente.CA_P, 1.48, valor_origem_nrc=1.48
+        ),
+    }
+
+    resultado = MotorAdequacao.gerar_distribuicao_inicial(
+        matriz_M=matriz,
+        requisitos=requisitos,
+        configuracoes=configuracoes,
+        percentual_alvo_volumoso=None,
+    )
+    totais = resultado.fracoes @ matriz
+    percentual_volumoso = float(resultado.fracoes[0])
+    alternativa_concentrada = np.array(
+        [0.38, 0.347, 0.262, 0.011, 0.0],
+        dtype=float,
+    )
+    totais_alternativa = alternativa_concentrada @ matriz
+    custos = np.array(
+        [configuracao.custo_por_kg_ms for configuracao in configuracoes],
+        dtype=float,
+    )
+
+    assert resultado.convergiu
+    assert resultado.origem_alvo == "otimizacao_percentual_hierarquica"
+    assert 0.45 <= percentual_volumoso <= 0.50
+    assert resultado.fracoes.sum() == pytest.approx(1.0, abs=1e-12)
+    assert 18.69 - 1e-9 <= totais[indice_de(Nutriente.PB)] <= 18.71 + 1e-9
+    assert totais[indice_de(Nutriente.NDT)] >= 65.6566 - 1e-9
+    assert totais[indice_de(Nutriente.FDN)] >= 30.0 - 1e-9
+    assert totais[indice_de(Nutriente.CA)] >= 0.6229 - 1e-9
+    assert totais[indice_de(Nutriente.P)] < 0.420875
+    assert 2.0 <= (
+        totais[indice_de(Nutriente.CA)]
+        / totais[indice_de(Nutriente.P)]
+    ) <= 2.5
+    assert float(resultado.fracoes @ custos) < float(
+        alternativa_concentrada @ custos
+    )
+    assert totais[indice_de(Nutriente.NDT)] < totais_alternativa[
+        indice_de(Nutriente.NDT)
+    ]
+    assert totais[indice_de(Nutriente.FDN)] > totais_alternativa[
+        indice_de(Nutriente.FDN)
+    ]
+    assert (
+        totais[indice_de(Nutriente.CA)] / totais[indice_de(Nutriente.P)]
+        > totais_alternativa[indice_de(Nutriente.CA)]
+        / totais_alternativa[indice_de(Nutriente.P)]
+    )
+    assert "pior desvio nutricional" in resultado.mensagem
+    assert "requisitos padrão viáveis (FDN, NDT, EE, CA)" in resultado.mensagem
+
+
+def test_ca_e_p_padrao_sao_rigidos_quando_ambos_sao_viaveis():
+    matriz = np.zeros((3, N_NUTRIENTES), dtype=float)
+    matriz[:, indice_de(Nutriente.CA)] = [0.2, 0.0, 4.0]
+    matriz[:, indice_de(Nutriente.P)] = [0.2, 1.0, 0.0]
+    requisitos = {
+        Nutriente.CA: RequisitoNutriente.maior_igual(
+            Nutriente.CA,
+            0.8,
+            valor_origem_nrc=0.8,
+        ),
+        Nutriente.P: RequisitoNutriente.maior_igual(
+            Nutriente.P,
+            0.4,
+            valor_origem_nrc=0.4,
+        ),
+    }
+
+    resultado = MotorAdequacao.gerar_distribuicao_inicial(
+        matriz_M=matriz,
+        requisitos=requisitos,
+        configuracoes=[
+            ConfiguracaoIngrediente("CONCENTRADO", tipo="ENERGETICO"),
+            ConfiguracaoIngrediente("CONCENTRADO", tipo="MINERAL"),
+            ConfiguracaoIngrediente("CONCENTRADO", tipo="MINERAL"),
+        ],
+        percentual_alvo_volumoso=0.0,
+    )
+
+    totais = resultado.fracoes @ matriz
+    assert resultado.convergiu
+    assert totais[indice_de(Nutriente.CA)] >= 0.8 - 1e-9
+    assert totais[indice_de(Nutriente.P)] >= 0.4 - 1e-9
+    assert 2.0 - 1e-8 <= (
+        totais[indice_de(Nutriente.CA)]
+        / totais[indice_de(Nutriente.P)]
+    ) <= 2.5 + 1e-8
+    assert "requisitos padrão viáveis (P, CA)" in resultado.mensagem
+
+
+def test_geracao_inicial_prioriza_relacao_ca_p_de_dois_a_dois_e_meio():
+    matriz = np.zeros((2, N_NUTRIENTES), dtype=float)
+    matriz[:, indice_de(Nutriente.CA)] = [1.0, 4.0]
+    matriz[:, indice_de(Nutriente.P)] = [1.0, 1.0]
+
+    resultado = MotorAdequacao.gerar_distribuicao_inicial(
+        matriz_M=matriz,
+        requisitos={},
+        configuracoes=[
+            ConfiguracaoIngrediente("CONCENTRADO", tipo="ENERGETICO"),
+            ConfiguracaoIngrediente("CONCENTRADO", tipo="MINERAL"),
+        ],
+        percentual_alvo_volumoso=0.0,
+    )
+
+    totais = resultado.fracoes @ matriz
+    relacao = totais[indice_de(Nutriente.CA)] / totais[indice_de(Nutriente.P)]
+    assert resultado.convergiu
+    assert 2.0 - 1e-8 <= relacao <= 2.5 + 1e-8
+    assert "faixa Ca:P preferencial" in resultado.mensagem
+
+
+def test_geracao_inicial_amplia_ca_p_ate_um_e_meio_a_tres_se_necessario():
+    matriz = np.zeros((2, N_NUTRIENTES), dtype=float)
+    matriz[:, indice_de(Nutriente.CA)] = [1.6, 1.8]
+    matriz[:, indice_de(Nutriente.P)] = [1.0, 1.0]
+
+    resultado = MotorAdequacao.gerar_distribuicao_inicial(
+        matriz_M=matriz,
+        requisitos={},
+        configuracoes=[
+            ConfiguracaoIngrediente("CONCENTRADO", tipo="ENERGETICO"),
+            ConfiguracaoIngrediente("CONCENTRADO", tipo="MINERAL"),
+        ],
+        percentual_alvo_volumoso=0.0,
+    )
+
+    totais = resultado.fracoes @ matriz
+    relacao = totais[indice_de(Nutriente.CA)] / totais[indice_de(Nutriente.P)]
+    assert resultado.convergiu
+    assert 1.5 - 1e-8 <= relacao <= 3.0 + 1e-8
+    assert relacao < 2.0
+    assert "faixa Ca:P ampliada" in resultado.mensagem
+
+
+def test_ca_p_preferencial_cede_a_fdn_viavel_dentro_da_faixa_ampliada():
+    matriz = np.zeros((2, N_NUTRIENTES), dtype=float)
+    matriz[:, indice_de(Nutriente.FDN)] = [60.0, 0.0]
+    matriz[:, indice_de(Nutriente.CA)] = [1.6, 2.5]
+    matriz[:, indice_de(Nutriente.P)] = [1.0, 1.0]
+    requisitos = {
+        Nutriente.FDN: RequisitoNutriente.maior_igual(
+            Nutriente.FDN,
+            40.0,
+            valor_origem_nrc=40.0,
+        ),
+    }
+
+    resultado = MotorAdequacao.gerar_distribuicao_inicial(
+        matriz_M=matriz,
+        requisitos=requisitos,
+        configuracoes=[
+            ConfiguracaoIngrediente("VOLUMOSO", tipo="SILAGENS"),
+            ConfiguracaoIngrediente("CONCENTRADO", tipo="ENERGETICO"),
+        ],
+        percentual_alvo_volumoso=None,
+    )
+
+    totais = resultado.fracoes @ matriz
+    relacao = totais[indice_de(Nutriente.CA)] / totais[indice_de(Nutriente.P)]
+    assert resultado.convergiu
+    assert totais[indice_de(Nutriente.FDN)] >= 40.0 - 1e-9
+    assert 1.5 - 1e-8 <= relacao <= 3.0 + 1e-8
+    assert relacao < 2.0
+    assert "faixa Ca:P ampliada" in resultado.mensagem
+
+
+def test_ca_p_fora_da_faixa_ampliada_permanece_melhor_esforco_se_inviavel():
+    matriz = np.zeros((2, N_NUTRIENTES), dtype=float)
+    matriz[:, indice_de(Nutriente.CA)] = [1.2, 1.3]
+    matriz[:, indice_de(Nutriente.P)] = [1.0, 1.0]
+
+    resultado = MotorAdequacao.gerar_distribuicao_inicial(
+        matriz_M=matriz,
+        requisitos={},
+        configuracoes=[
+            ConfiguracaoIngrediente("CONCENTRADO", tipo="ENERGETICO"),
+            ConfiguracaoIngrediente("CONCENTRADO", tipo="MINERAL"),
+        ],
+        percentual_alvo_volumoso=0.0,
+    )
+
+    totais = resultado.fracoes @ matriz
+    relacao = totais[indice_de(Nutriente.CA)] / totais[indice_de(Nutriente.P)]
+    assert resultado.convergiu
+    assert relacao == pytest.approx(1.3, abs=2e-4)
+
+
+def test_redistribuicao_com_volumoso_fixo_tambem_prioriza_ca_p():
+    matriz = np.zeros((3, N_NUTRIENTES), dtype=float)
+    matriz[:, indice_de(Nutriente.CA)] = [1.0, 1.0, 5.0]
+    matriz[:, indice_de(Nutriente.P)] = [1.0, 1.0, 1.0]
+    participacao = ParticipacaoVetor(
+        ids_ingredientes=(1, 2, 3),
+        fracoes=np.array([0.50, 0.25, 0.25], dtype=float),
+        origens=(
+            OrigemParticipacao.MANUAL_TRAVADA,
+            OrigemParticipacao.CALCULADA,
+            OrigemParticipacao.CALCULADA,
+        ),
+    )
+
+    resultado = MotorAdequacao.redistribuir(
+        matriz_M=matriz,
+        requisitos={},
+        participacao_atual=participacao,
+        configuracoes=[
+            ConfiguracaoIngrediente("VOLUMOSO", tipo="SILAGENS"),
+            ConfiguracaoIngrediente("CONCENTRADO", tipo="ENERGETICO"),
+            ConfiguracaoIngrediente("CONCENTRADO", tipo="MINERAL"),
+        ],
+        percentual_alvo_volumoso=0.50,
+    )
+
+    totais = resultado.fracoes @ matriz
+    relacao = totais[indice_de(Nutriente.CA)] / totais[indice_de(Nutriente.P)]
+    assert resultado.convergiu
+    assert resultado.fracoes[0] == pytest.approx(0.50, abs=1e-9)
+    assert resultado.fracoes.sum() == pytest.approx(1.0, abs=1e-9)
+    assert 2.0 - 1e-8 <= relacao <= 2.5 + 1e-8
+
+
+def test_modo_automatico_pode_resultar_em_zero_volumoso():
+    matriz = np.zeros((2, N_NUTRIENTES), dtype=float)
+    matriz[:, indice_de(Nutriente.PB)] = [0.0, 20.0]
+    requisitos = {
+        Nutriente.PB: RequisitoNutriente.maior_igual(
+            Nutriente.PB,
+            20.0,
+            alterado_pelo_usuario=True,
+        )
+    }
+
+    resultado = MotorAdequacao.gerar_distribuicao_inicial(
+        matriz_M=matriz,
+        requisitos=requisitos,
+        configuracoes=[
+            ConfiguracaoIngrediente(classificacao="VOLUMOSO"),
+            ConfiguracaoIngrediente(classificacao="CONCENTRADO"),
+        ],
+        percentual_alvo_volumoso=None,
+    )
+
+    assert resultado.fracoes == pytest.approx([0.0, 1.0], abs=1e-10)
+    assert resultado.fracoes.sum() == pytest.approx(1.0, abs=1e-12)
+
+
+def test_modo_automatico_pode_resultar_em_cem_por_cento_volumoso():
+    matriz = np.zeros((2, N_NUTRIENTES), dtype=float)
+    matriz[:, indice_de(Nutriente.PB)] = [20.0, 0.0]
+    requisitos = {
+        Nutriente.PB: RequisitoNutriente.maior_igual(
+            Nutriente.PB,
+            20.0,
+            alterado_pelo_usuario=True,
+        )
+    }
+
+    resultado = MotorAdequacao.gerar_distribuicao_inicial(
+        matriz_M=matriz,
+        requisitos=requisitos,
+        configuracoes=[
+            ConfiguracaoIngrediente(classificacao="VOLUMOSO"),
+            ConfiguracaoIngrediente(classificacao="CONCENTRADO"),
+        ],
+        percentual_alvo_volumoso=None,
+    )
+
+    assert resultado.fracoes == pytest.approx([1.0, 0.0], abs=1e-10)
+
+
+def test_modo_automatico_sem_volumoso_fecha_cem_por_cento_concentrado():
+    resultado = MotorAdequacao.gerar_distribuicao_inicial(
+        matriz_M=np.zeros((2, N_NUTRIENTES), dtype=float),
+        requisitos={},
+        configuracoes=[
+            ConfiguracaoIngrediente(classificacao="CONCENTRADO", limite_max=0.70),
+            ConfiguracaoIngrediente(classificacao="CONCENTRADO", limite_min=0.30),
+        ],
+        percentual_alvo_volumoso=None,
+    )
+
+    assert resultado.fracoes.sum() == pytest.approx(1.0, abs=1e-12)
+    assert np.all(resultado.fracoes >= np.array([0.0, 0.30]) - 1e-10)
+    assert np.all(resultado.fracoes <= np.array([0.70, 1.0]) + 1e-10)
+
+
+def test_alvo_fixo_inviavel_com_ingredientes_travados_e_rejeitado():
+    participacao = ParticipacaoVetor(
+        ids_ingredientes=(1, 2),
+        fracoes=np.array([0.30, 0.70], dtype=float),
+        origens=(
+            OrigemParticipacao.MANUAL_TRAVADA,
+            OrigemParticipacao.MANUAL_TRAVADA,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="todos os ingredientes estao travados"):
+        MotorAdequacao.redistribuir(
+            matriz_M=np.zeros((2, N_NUTRIENTES), dtype=float),
+            requisitos={},
+            participacao_atual=participacao,
+            configuracoes=[
+                ConfiguracaoIngrediente(classificacao="VOLUMOSO"),
+                ConfiguracaoIngrediente(classificacao="CONCENTRADO"),
+            ],
+            percentual_alvo_volumoso=0.20,
+        )
+
+
+def test_exigencia_manual_inviavel_e_rejeitada_antes_de_persistir_resultado():
+    matriz = np.zeros((2, N_NUTRIENTES), dtype=float)
+    matriz[:, indice_de(Nutriente.PB)] = [8.0, 10.0]
+    requisitos = {
+        Nutriente.PB: RequisitoNutriente.maior_igual(
+            Nutriente.PB,
+            20.0,
+            alterado_pelo_usuario=True,
+        )
+    }
+
+    with pytest.raises(ValueError, match="exigencias nutricionais rigidas"):
+        MotorAdequacao.gerar_distribuicao_inicial(
+            matriz_M=matriz,
+            requisitos=requisitos,
+            configuracoes=[
+                ConfiguracaoIngrediente(classificacao="VOLUMOSO"),
+                ConfiguracaoIngrediente(classificacao="CONCENTRADO"),
+            ],
+            percentual_alvo_volumoso=None,
+        )
+
+
+def test_convergencia_estrutural_nao_significa_adequacao_nutricional_completa():
+    matriz = np.zeros((2, N_NUTRIENTES), dtype=float)
+    matriz[:, indice_de(Nutriente.PB)] = [8.0, 10.0]
+    requisitos = {
+        Nutriente.PB: RequisitoNutriente.maior_igual(
+            Nutriente.PB,
+            20.0,
+            valor_origem_nrc=20.0,
+        )
+    }
+
+    resultado = MotorAdequacao.gerar_distribuicao_inicial(
+        matriz_M=matriz,
+        requisitos=requisitos,
+        configuracoes=[
+            ConfiguracaoIngrediente(classificacao="VOLUMOSO"),
+            ConfiguracaoIngrediente(classificacao="CONCENTRADO"),
+        ],
+        percentual_alvo_volumoso=None,
+    )
+    pb_obtida = float(resultado.fracoes @ matriz[:, indice_de(Nutriente.PB)])
+
+    assert resultado.convergiu
+    assert resultado.fracoes.sum() == pytest.approx(1.0, abs=1e-12)
+    assert pb_obtida < 20.0
+
+
+def test_modo_automatico_preserva_trava_individual_sem_travar_subgrupo():
+    matriz = np.zeros((3, N_NUTRIENTES), dtype=float)
+    matriz[:, indice_de(Nutriente.PB)] = [12.0, 5.0, 25.0]
+    participacao = ParticipacaoVetor(
+        ids_ingredientes=(1, 2, 3),
+        fracoes=np.array([0.25, 0.25, 0.50], dtype=float),
+        origens=(
+            OrigemParticipacao.MANUAL_TRAVADA,
+            OrigemParticipacao.CALCULADA,
+            OrigemParticipacao.CALCULADA,
+        ),
+    )
+
+    resultado = MotorAdequacao.redistribuir(
+        matriz_M=matriz,
+        requisitos={},
+        participacao_atual=participacao,
+        configuracoes=[
+            ConfiguracaoIngrediente(classificacao="VOLUMOSO"),
+            ConfiguracaoIngrediente(classificacao="VOLUMOSO"),
+            ConfiguracaoIngrediente(classificacao="CONCENTRADO"),
+        ],
+        percentual_alvo_volumoso=None,
+        reiniciar_livres=True,
+    )
+
+    assert resultado.fracoes[0] == pytest.approx(0.25, abs=1e-12)
+    assert resultado.fracoes.sum() == pytest.approx(1.0, abs=1e-12)
+
+
 def test_gerar_distribuicao_rejeita_soma_de_limites_insuficiente():
     configuracoes = [
         ConfiguracaoIngrediente(classificacao="VOLUMOSO", limite_max=0.30),
@@ -104,6 +573,25 @@ def test_gerar_distribuicao_rejeita_soma_de_limites_insuficiente():
             requisitos={},
             configuracoes=configuracoes,
             percentual_alvo_volumoso=0.30,
+        )
+
+
+def test_alvo_fixo_acima_da_capacidade_maxima_dos_volumosos_e_rejeitado():
+    with pytest.raises(
+        ValueError,
+        match="solicitado 80.00%.*limites permitem de 0.10% a 30.00%",
+    ):
+        MotorAdequacao.gerar_distribuicao_inicial(
+            matriz_M=np.zeros((2, N_NUTRIENTES), dtype=float),
+            requisitos={},
+            configuracoes=[
+                ConfiguracaoIngrediente(
+                    classificacao="VOLUMOSO",
+                    limite_max=0.30,
+                ),
+                ConfiguracaoIngrediente(classificacao="CONCENTRADO"),
+            ],
+            percentual_alvo_volumoso=0.80,
         )
 
 
@@ -128,8 +616,8 @@ def test_geracao_inicial_usa_tipo_e_mantem_todos_os_selecionados():
     assert resultado.fracoes[1] > resultado.fracoes[2] > resultado.fracoes[3]
 
 
-def test_dieta_mista_aplica_piso_padrao_de_pb_quando_for_viavel():
-    """A PB padrão deixa de ser apenas preferência em dieta com volumoso."""
+def test_dieta_mista_aplica_pb_padrao_igual_ao_ideal_quando_for_viavel():
+    """A PB padrão não fica abaixo nem acima do ideal em dieta mista."""
     matriz = np.zeros((3, N_NUTRIENTES), dtype=float)
     matriz[:, indice_de(Nutriente.PB)] = [7.0, 9.0, 48.0]
     configuracoes = [
@@ -138,7 +626,7 @@ def test_dieta_mista_aplica_piso_padrao_de_pb_quando_for_viavel():
         ConfiguracaoIngrediente(classificacao="CONCENTRADO", tipo="PROTEICO"),
     ]
     requisitos = {
-        Nutriente.PB: RequisitoNutriente.maior_igual(
+        Nutriente.PB: RequisitoNutriente.igual(
             Nutriente.PB,
             18.0,
             valor_origem_nrc=18.0,
@@ -156,11 +644,11 @@ def test_dieta_mista_aplica_piso_padrao_de_pb_quando_for_viavel():
     assert resultado.convergiu
     assert resultado.fracoes[0] == pytest.approx(0.50, abs=1e-9)
     assert resultado.fracoes.sum() == pytest.approx(1.0, abs=1e-9)
-    assert pb >= 18.0 - 1e-8
+    assert 17.99 - 1e-9 <= pb <= 18.01 + 1e-9
 
 
-def test_dieta_mista_mantem_pb_padrao_como_melhor_esforco_se_for_inviavel():
-    """Um piso impossível não invalida soma, limites ou percentual de volumoso."""
+def test_dieta_mista_mantem_pb_ideal_como_melhor_esforco_se_for_inviavel():
+    """Uma igualdade impossível não invalida soma, limites ou volumoso."""
     matriz = np.zeros((3, N_NUTRIENTES), dtype=float)
     matriz[:, indice_de(Nutriente.PB)] = [7.0, 9.0, 48.0]
     configuracoes = [
@@ -169,7 +657,7 @@ def test_dieta_mista_mantem_pb_padrao_como_melhor_esforco_se_for_inviavel():
         ConfiguracaoIngrediente(classificacao="CONCENTRADO", tipo="PROTEICO"),
     ]
     requisitos = {
-        Nutriente.PB: RequisitoNutriente.maior_igual(
+        Nutriente.PB: RequisitoNutriente.igual(
             Nutriente.PB,
             35.0,
             valor_origem_nrc=35.0,
@@ -190,7 +678,7 @@ def test_dieta_mista_mantem_pb_padrao_como_melhor_esforco_se_for_inviavel():
     assert pb < 35.0
 
 
-def test_redistribuicao_de_dieta_mista_mantem_pb_com_volumoso_travado():
+def test_redistribuicao_de_dieta_mista_mantem_pb_ideal_com_volumoso_travado():
     """Ao editar o concentrado, a PB considera o volumoso já travado."""
     matriz = np.zeros((3, N_NUTRIENTES), dtype=float)
     matriz[:, indice_de(Nutriente.PB)] = [7.0, 9.0, 48.0]
@@ -209,7 +697,7 @@ def test_redistribuicao_de_dieta_mista_mantem_pb_com_volumoso_travado():
         ConfiguracaoIngrediente(classificacao="CONCENTRADO", tipo="PROTEICO"),
     ]
     requisitos = {
-        Nutriente.PB: RequisitoNutriente.maior_igual(
+        Nutriente.PB: RequisitoNutriente.igual(
             Nutriente.PB,
             18.0,
             valor_origem_nrc=18.0,
@@ -228,7 +716,36 @@ def test_redistribuicao_de_dieta_mista_mantem_pb_com_volumoso_travado():
     assert resultado.convergiu
     assert resultado.fracoes[0] == pytest.approx(0.50, abs=1e-9)
     assert resultado.fracoes.sum() == pytest.approx(1.0, abs=1e-9)
-    assert pb >= 18.0 - 1e-8
+    assert 17.99 - 1e-9 <= pb <= 18.01 + 1e-9
+
+
+def test_pb_padrao_igual_e_rigida_no_modo_automatico_sem_alvo_de_volumoso():
+    """O alvo de PB não depende de fixar previamente o total de volumoso."""
+    matriz = np.zeros((3, N_NUTRIENTES), dtype=float)
+    matriz[:, indice_de(Nutriente.PB)] = [7.0, 9.0, 48.0]
+    configuracoes = [
+        ConfiguracaoIngrediente(classificacao="VOLUMOSO", tipo="SILAGENS"),
+        ConfiguracaoIngrediente(classificacao="CONCENTRADO", tipo="ENERGETICO"),
+        ConfiguracaoIngrediente(classificacao="CONCENTRADO", tipo="PROTEICO"),
+    ]
+    requisitos = {
+        Nutriente.PB: RequisitoNutriente.igual(
+            Nutriente.PB,
+            18.0,
+            valor_origem_nrc=18.0,
+        )
+    }
+
+    resultado = MotorAdequacao.gerar_distribuicao_inicial(
+        matriz_M=matriz,
+        requisitos=requisitos,
+        configuracoes=configuracoes,
+        percentual_alvo_volumoso=None,
+    )
+
+    pb = float(resultado.fracoes @ matriz[:, indice_de(Nutriente.PB)])
+    assert resultado.fracoes.sum() == pytest.approx(1.0, abs=1e-9)
+    assert 17.99 - 1e-9 <= pb <= 18.01 + 1e-9
 
 
 def test_dose_fixa_de_aditivo_usa_minimo_igual_ao_maximo():

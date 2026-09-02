@@ -1,7 +1,7 @@
 """Configuração do admin para o modelo Ingrediente."""
 
 from django.contrib import admin
-from .models import Ingrediente
+from .models import CAMPOS_LIMITES_PARTICIPACAO, Ingrediente
 
 # pylint: disable= protected-access
 
@@ -16,6 +16,11 @@ class IngredienteAdmin(admin.ModelAdmin):
     readonly_fields = ('fonte_valadares', 'dt_cadastro', 'dt_atualizacao',)
 
     def get_readonly_fields(self, request, obj=None):
+        """Em itens Valadares, libera somente os dois limites globais."""
         if obj and obj.fonte_valadares:
-            return [f.name for f in self.model._meta.fields]
+            return [
+                campo.name
+                for campo in self.model._meta.fields
+                if campo.name not in CAMPOS_LIMITES_PARTICIPACAO
+            ]
         return self.readonly_fields

@@ -1,8 +1,13 @@
 """Validação do catálogo de ingredientes e dos preços pessoais."""
 
 from rest_framework import serializers
-from .models import Ingrediente, PrecoIngredienteUsuario
+
 from accounts.models import Usuario
+from .models import (
+    CAMPOS_LIMITES_PARTICIPACAO,
+    Ingrediente,
+    PrecoIngredienteUsuario,
+)
 
 # pylint: disable= too-few-public-methods
 
@@ -101,13 +106,16 @@ class IngredienteSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs):
-        """Impede catálogo público editável e rejeita composição ou custo impossíveis."""
+        """Protege a composição pública e rejeita composição ou custo impossíveis."""
 
         instance = getattr(self, 'instance', None)
         if instance and instance.fonte_valadares:
-            raise serializers.ValidationError(
-                'Ingredientes da tabela Valadares não podem ser editados.'
-            )
+            campos_proibidos = set(attrs) - CAMPOS_LIMITES_PARTICIPACAO
+            if campos_proibidos:
+                raise serializers.ValidationError(
+                    'Em ingredientes Valadares, somente os limites mínimo e '
+                    'máximo de participação podem ser editados.'
+                )
 
         campos_percentuais = ('ms', 'pb', 'ndt', 'fdn', 'ee', 'ca', 'p')
         for campo in campos_percentuais:

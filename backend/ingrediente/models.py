@@ -5,7 +5,9 @@ customizados pertencem a um usuário. Preços ficam em uma tabela separada para
 que cada produtor possa manter valores regionais sem alterar o catálogo comum.
 """
 
+from django.core.exceptions import ValidationError
 from django.db import models
+
 from accounts.models import Usuario
 
 # pylint: disable= no-member, too-few-public-methods
@@ -37,6 +39,11 @@ TIPO_EXCEL_MAP = {
     'Mineral':          'mineral',
     'Aditivos':         'aditivos',
 }
+
+CAMPOS_LIMITES_PARTICIPACAO = frozenset({
+    'limite_min_participacao',
+    'limite_max_participacao',
+})
 
 
 class Ingrediente(models.Model):
@@ -134,6 +141,33 @@ class Ingrediente(models.Model):
         """Mostra nome, tipo e origem do ingrediente em listas administrativas."""
         origem = 'Valadares' if self.fonte_valadares else 'Custom'
         return f'{self.nome} [{self.get_tipo_display()} / {origem}]'
+
+    def clean(self):
+        """Valida os limites globais também nos formulários do Django Admin."""
+        super().clean()
+        erros = {}
+        limite_min = self.limite_min_participacao
+        limite_max = self.limite_max_participacao
+
+        if limite_min is not None and not 0.0 <= limite_min < 100.0:
+            erros['limite_min_participacao'] = (
+                'O limite mínimo de participação deve estar entre 0 e 100%.'
+            )
+        if limite_max is not None and not 0.0 < limite_max <= 100.0:
+            erros['limite_max_participacao'] = (
+                'O limite máximo de participação deve estar entre 0 (exclusive) e 100%.'
+            )
+        if (
+            limite_min is not None
+            and limite_max is not None
+            and limite_min > limite_max
+        ):
+            erros['limite_min_participacao'] = (
+                'O limite mínimo não pode ser maior que o limite máximo.'
+            )
+
+        if erros:
+            raise ValidationError(erros)
 
 
 class OrigemAlteracaoPrecoChoices(models.TextChoices):

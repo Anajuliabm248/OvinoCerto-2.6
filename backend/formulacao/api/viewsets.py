@@ -29,9 +29,15 @@ from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from drf_spectacular.utils import OpenApiExample, extend_schema
 
 from formulacao.api.listagem_exigencias_nrc import listar_sugeridas, listar_todas
 from formulacao.api.listagem_ingredientes import listar_ingredientes_disponiveis
+from formulacao.api.dados_dieta_serializers import (
+    AtualizarQuantidadeMisturaInputSerializer,
+    DadosDietaOutputSerializer,
+    DadosDietaQuerySerializer,
+)
 from formulacao.api.serializers import (
     AdicionarIngredienteInputSerializer,
     AjustarParticipacaoInputSerializer,
@@ -50,11 +56,16 @@ from formulacao.api.serializers import (
     IngredienteDisponivelSerializer,
     IngredienteFormulacaoSerializer,
     IniciarFormulacaoInputSerializer,
+    ParametrosViabilidadeBasicosSerializer,
     ParametrosViabilidadeSerializer,
     ResultadoAdequacaoOutputSerializer,
     SnapshotDetailSerializer,
     SnapshotListSerializer,
     SugestaoIngredienteSerializer,
+    ViabilidadeConfiguracaoPendenteOutputSerializer,
+    ViabilidadeCordeiroOutputSerializer,
+    ViabilidadeCordeiroConfiguracaoPendenteOutputSerializer,
+    ViabilidadeEconomicaOutputSerializer,
     ViabilidadeOutputSerializer,
 )
 from formulacao.models import Formulacao
@@ -71,10 +82,13 @@ from formulacao.services import (
     AtualizarPercentualVolumosoService,
     AtualizarParametrosViabilidadeService,
     AtualizarPrecoIngredienteService,
+    AtualizarQuantidadeMisturaService,
+    CalcularDadosDietaService,
     CalcularViabilidadeService,
+    DadosDietaNaoCalculadosError,
     GerarFormulacaoInicialService,
     IniciarFormulacaoService,
-    RecalcularFormulacaoService,
+    ReadequarFormulacaoService,
     RemoverIngredienteService,
     RestaurarVersaoService,
     SugerirIngredientesService,
@@ -100,7 +114,17 @@ _INPUT_SERIALIZER_MAP = {
     "ajustar_ingrediente":   AjustarParticipacaoInputSerializer,
     "atualizar_preco_ingrediente": AtualizarPrecoInputSerializer,
     "atualizar_parametros_viabilidade": AtualizarParametrosViabilidadeInputSerializer,
+    "atualizar_quantidade_mistura": AtualizarQuantidadeMisturaInputSerializer,
 }
+
+
+# Os Quadros 12, 13 e 14 projetam preço de venda e retorno econômico do
+# ganho de peso. Esse cenário foi definido apenas para exigências de
+# cordeiros; a categoria deve vir da exigência selecionada, não do lote.
+_CATEGORIAS_CORDEIRO = frozenset({
+    "cordeiros_4_meses",
+    "cordeiros_8_meses",
+})
 
 
 class FormulacaoViewSet(viewsets.ModelViewSet):
@@ -142,6 +166,8 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
     ---------------------
     POST   /formulacoes/{id}/recalcular/
     GET    /formulacoes/{id}/resultado/
+    GET    /formulacoes/{id}/dados-dieta/
+    PATCH  /formulacoes/{id}/dados-dieta/
     GET    /formulacoes/{id}/custos/
     GET    /formulacoes/{id}/viabilidade/
     PATCH  /formulacoes/{id}/viabilidade/parametros/
@@ -290,6 +316,29 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
     # Etapa 2: gerar distribuição inicial
     # ------------------------------------------------------------------
 
+    @extend_schema(
+        request=GerarFormulacaoInicialInputSerializer,
+        responses={200: FormulacaoDetailSerializer},
+        examples=[
+            OpenApiExample(
+                "Volumoso fixado pelo usuario",
+                value={
+                    "modo_percentual_volumoso": "FIXADO_PELO_USUARIO",
+                    "percentual_alvo_volumoso": 20,
+                    "ingrediente_ids": [1, 2, 3],
+                },
+                request_only=True,
+            ),
+            OpenApiExample(
+                "Volumoso otimizado pelo sistema",
+                value={
+                    "modo_percentual_volumoso": "OTIMIZADO_PELO_SISTEMA",
+                    "ingrediente_ids": [1, 2, 3],
+                },
+                request_only=True,
+            ),
+        ],
+    )
     @action(detail=True, methods=["post"], url_path="gerar")
     def gerar(self, request, pk=None):
         """
@@ -315,6 +364,9 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
                 percentual_alvo_volumoso=serializer.validated_data.get(
                     "percentual_alvo_volumoso"
                 ),
+                modo_percentual_volumoso=serializer.validated_data.get(
+                    "modo_percentual_volumoso"
+                ),
                 objetivo=serializer.validated_data["objetivo"],
             )
         except ValueError as exc:
@@ -322,6 +374,27 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
 
         return Response(FormulacaoDetailSerializer(formulacao).data, status=status.HTTP_200_OK)
 
+    @extend_schema(
+        request=AtualizarPercentualVolumosoInputSerializer,
+        responses={200: FormulacaoDetailSerializer},
+        examples=[
+            OpenApiExample(
+                "Fixar novo percentual",
+                value={
+                    "modo_percentual_volumoso": "FIXADO_PELO_USUARIO",
+                    "percentual_alvo_volumoso": 35,
+                },
+                request_only=True,
+            ),
+            OpenApiExample(
+                "Liberar para nova otimizacao",
+                value={
+                    "modo_percentual_volumoso": "OTIMIZADO_PELO_SISTEMA",
+                },
+                request_only=True,
+            ),
+        ],
+    )
     @action(detail=True, methods=["patch"], url_path="percentual-volumoso")
     def atualizar_percentual_volumoso(self, request, pk=None):
         """PATCH /formulacoes/{id}/percentual-volumoso/."""
@@ -332,9 +405,12 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
             perfil = self._perfil(request)
             formulacao = AtualizarPercentualVolumosoService.executar(
                 formulacao_id=int(pk),
-                percentual_alvo_volumoso=serializer.validated_data[
+                percentual_alvo_volumoso=serializer.validated_data.get(
                     "percentual_alvo_volumoso"
-                ],
+                ),
+                modo_percentual_volumoso=serializer.validated_data.get(
+                    "modo_percentual_volumoso"
+                ),
                 usuario_id=perfil.id if perfil else None,
             )
         except ValueError as exc:
@@ -549,17 +625,17 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
         """
         POST /formulacoes/{id}/recalcular/
 
-        recalcula sem alterar participações.
-        Útil após mudar exigências configuradas sem redistribuir.
+        Rebalanceia os ingredientes livres contra a exigência vigente e,
+        em seguida, recalcula nutrientes, custos, alertas e snapshot.
+        Participações MANUAL_TRAVADA permanecem inalteradas.
         """
         self._get_formulacao(request, pk)
 
         try:
             perfil = self._perfil(request)
-            RecalcularFormulacaoService.executar(
+            ReadequarFormulacaoService.executar(
                 formulacao_id=int(pk),
                 usuario_id   =perfil.id if perfil else None,
-                motivo       ="recálculo explícito",
             )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -593,6 +669,88 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
             "vetor_total": snapshot.payload.get("vetor_total", {}),
             "alertas":     AlertaSerializer(alertas_ativos, many=True).data,
         })
+
+    @extend_schema(
+        parameters=[DadosDietaQuerySerializer],
+        responses={200: DadosDietaOutputSerializer},
+        examples=[
+            OpenApiExample(
+                "Preparar 4200 kg de mistura na matéria natural",
+                value=4200.0,
+                parameter_only=("quantidade_mistura_mn_kg", "query"),
+            ),
+        ],
+        description=(
+            "Compõe os Quadros 1, 1.1, 1.2 e 2 sem recalcular a formulação. "
+            "Quando o override opcional não é informado, usa a quantidade "
+            "persistida na formulação."
+        ),
+    )
+    @action(detail=True, methods=["get"], url_path="dados-dieta")
+    def dados_dieta(self, request, pk=None):
+        """GET /formulacoes/{id}/dados-dieta/ — fachada somente leitura."""
+        self._get_formulacao(request, pk)
+        consulta = DadosDietaQuerySerializer(data=request.query_params)
+        consulta.is_valid(raise_exception=True)
+        try:
+            payload = CalcularDadosDietaService.executar(
+                formulacao_id=int(pk),
+                quantidade_mistura_mn_kg=consulta.validated_data.get(
+                    "quantidade_mistura_mn_kg"
+                ),
+            )
+        except DadosDietaNaoCalculadosError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(DadosDietaOutputSerializer(payload).data)
+
+    @extend_schema(
+        request=AtualizarQuantidadeMisturaInputSerializer,
+        responses={200: DadosDietaOutputSerializer},
+        examples=[
+            OpenApiExample(
+                "Salvar 4200 kg de mistura na matéria natural",
+                value={"quantidade_mistura_mn_kg": 4200.0},
+                request_only=True,
+            ),
+        ],
+        description=(
+            "Persiste a quantidade de mistura concentrada em kg de matéria "
+            "natural e devolve imediatamente os Quadros 1, 1.1, 1.2 e 2 "
+            "atualizados, sem alterar participações ou gerar snapshot."
+        ),
+    )
+    @dados_dieta.mapping.patch
+    def atualizar_quantidade_mistura(self, request, pk=None):
+        """PATCH /formulacoes/{id}/dados-dieta/ — salva e atualiza a saída."""
+        self._get_formulacao(request, pk)
+        entrada = self.get_serializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        try:
+            payload = AtualizarQuantidadeMisturaService.executar(
+                formulacao_id=int(pk),
+                quantidade_mistura_mn_kg=entrada.validated_data[
+                    "quantidade_mistura_mn_kg"
+                ],
+            )
+        except DadosDietaNaoCalculadosError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(DadosDietaOutputSerializer(payload).data)
 
     # ------------------------------------------------------------------
     # Indicadores de custo
@@ -660,7 +818,7 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
         return Response(CustoFormulacaoOutputSerializer(payload).data)
 
     # ------------------------------------------------------------------
-    # Viabilidade (Quadros 9-14)
+    # Viabilidade (Quadros 4-9)
     # ------------------------------------------------------------------
 
     @action(detail=True, methods=["get"], url_path="viabilidade")
@@ -668,28 +826,40 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
         """
         GET /formulacoes/{id}/viabilidade/
 
-        Custos e Viabilidade da Dieta
-        Requer `preco_venda_kg_pv` já definido, se ainda não foi
-        informado, retorna 400 apontando para o PATCH de parâmetros.
+        Retorna os Quadros 5 e 6 para qualquer categoria de ovinos.
+        O Quadro 8 é um campo de entrada exclusivo de cordeiros. Após
+        ele ser preenchido, os Quadros 7 e 9 também são incluídos.
         """
         formulacao = self._get_formulacao(request, pk)
+        exigencia_eh_cordeiro = self._exigencia_eh_cordeiro(formulacao)
+        contexto = ParametrosViabilidadeRepository.obter_contexto(int(pk))
+        parametros = ParametrosViabilidadeRepository.get_ou_criar_default(int(pk))
+        dados_animal = self._dados_animal_viabilidade(contexto)
+        campos_pendentes = self._campos_pendentes_viabilidade(parametros)
+        if campos_pendentes:
+            payload = {
+                "dados_animal": dados_animal,
+                "parametros": parametros,
+                "configuracao_pendente": True,
+                "campos_pendentes": campos_pendentes,
+            }
+            serializer = (
+                ViabilidadeCordeiroConfiguracaoPendenteOutputSerializer
+                if exigencia_eh_cordeiro
+                else ViabilidadeConfiguracaoPendenteOutputSerializer
+            )
+            return Response(serializer(payload).data)
 
         try:
-            saida = CalcularViabilidadeService.executar(int(pk))
+            saida = CalcularViabilidadeService.executar(
+                int(pk),
+                incluir_quadros_economicos=exigencia_eh_cordeiro,
+            )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
-        parametros = ParametrosViabilidadeRepository.get_ou_criar_default(int(pk))
-        lote = formulacao.lote
-
         payload = {
-            "dados_animal": {
-                "especie":      "Ovino",
-                "raca":         lote.raca,
-                "sistema":      lote.sistema,
-                "categoria":    lote.get_categoria_display(),
-                "peso_vivo_kg": lote.peso_vivo,
-            },
+            "dados_animal": dados_animal,
             "parametros":   parametros,
             "indices":      saida.indices,
             "linhas_custo": saida.linhas_custo,
@@ -700,11 +870,19 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
             "investimento_total_geral":    saida.investimento_total_geral,
             "custo_por_animal_total":      saida.custo_por_animal_total,
             "custo_por_animal_dia_total":  saida.custo_por_animal_dia_total,
-            "preco_minimo_kg_pv":          saida.preco_minimo_kg_pv,
-            "resultado_animal": saida.resultado_animal,
-            "resultado_lote":   saida.resultado_lote,
         }
-        return Response(ViabilidadeOutputSerializer(payload).data)
+        if exigencia_eh_cordeiro and parametros.preco_venda_kg_pv is not None:
+            payload.update({
+                "preco_minimo_kg_pv": saida.preco_minimo_kg_pv,
+                "resultado_animal": saida.resultado_animal,
+                "resultado_lote": saida.resultado_lote,
+            })
+            serializer = ViabilidadeEconomicaOutputSerializer
+        elif exigencia_eh_cordeiro:
+            serializer = ViabilidadeCordeiroOutputSerializer
+        else:
+            serializer = ViabilidadeOutputSerializer
+        return Response(serializer(payload).data)
 
     @action(
         detail=True,
@@ -715,23 +893,34 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
         """
         PATCH /formulacoes/{id}/viabilidade/parametros/
 
-        Índices Zootécnicos e preco_venda_kg_pv
-        partial update, só os campos enviados são alterados.
+        Índices Zootécnicos para todos os ovinos. `preco_venda_kg_pv`
+        é exclusivo das exigências de cordeiros.
         """
-        self._get_formulacao(request, pk)
+        formulacao = self._get_formulacao(request, pk)
 
         ser = self.get_serializer(data=request.data)
         ser.is_valid(raise_exception=True)
+        exigencia_eh_cordeiro = self._exigencia_eh_cordeiro(formulacao)
+        campos = dict(ser.validated_data)
+        if not exigencia_eh_cordeiro:
+            # O mesmo formulário pode enviar este campo já preenchido por uma
+            # configuração anterior. Fora de cordeiros ele não participa de
+            # nenhum quadro e não deve impedir a gravação dos índices.
+            campos.pop("preco_venda_kg_pv", None)
 
         try:
             parametros = AtualizarParametrosViabilidadeService.executar(
                 formulacao_id=int(pk),
-                **ser.validated_data,
+                **campos,
             )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
-        return Response(ParametrosViabilidadeSerializer(parametros).data)
+        serializer = (
+            ParametrosViabilidadeSerializer
+            if exigencia_eh_cordeiro else ParametrosViabilidadeBasicosSerializer
+        )
+        return Response(serializer(parametros).data)
 
     # ------------------------------------------------------------------
     # Sugestões de ingredientes
@@ -877,6 +1066,42 @@ class FormulacaoViewSet(viewsets.ModelViewSet):
 
     def _get_formulacao(self, request, pk):
         return get_object_or_404(self._qs_do_usuario(request), pk=pk)
+
+    @staticmethod
+    def _exigencia_eh_cordeiro(formulacao):
+        """Identifica se os Quadros 12, 13 e 14 podem ser apresentados."""
+        try:
+            exigencia = formulacao.exigencia_configurada
+        except ObjectDoesNotExist:
+            return False
+
+        origem = exigencia.exigencia_nrc_origem
+        return origem is not None and origem.categoria in _CATEGORIAS_CORDEIRO
+
+    @staticmethod
+    def _dados_animal_viabilidade(contexto):
+        """Expõe o lote ou a exigência que de fato inicializou o cenário."""
+        return {
+            "especie": "Ovino",
+            "raca": contexto.raca,
+            "sistema": contexto.sistema,
+            "categoria": contexto.categoria_display,
+            "peso_vivo_kg": contexto.peso_vivo_kg,
+        }
+
+    @staticmethod
+    def _campos_pendentes_viabilidade(parametros):
+        """Impede cálculos com os zeros usados como preenchimento inicial."""
+        campos = []
+        if parametros.num_animais <= 0:
+            campos.append("num_animais")
+        if parametros.estimativa_permanencia_dias <= 0:
+            campos.append("estimativa_permanencia_dias")
+        if parametros.peso_entrada_kg <= 0:
+            campos.append("peso_entrada_kg")
+        if parametros.cms_percentual_pv <= 0:
+            campos.append("cms_percentual_pv")
+        return campos
 
     def _get_lote(self, request, lote_id):
         qs = Lote.objects.select_related("propriedade__usuario")

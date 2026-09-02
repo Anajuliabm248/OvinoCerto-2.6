@@ -1,10 +1,10 @@
 # 🐑 OvinoCerto 2.6
 > Sistema automatizado de formulação de rações para ovinos da UFSM-Politécnico.
 
-## 📖 Sobre o Projeto
+## Sobre o Projeto
 O **OvinoCerto** é uma aplicação web voltada para a otimização e automatização do cálculo de dietas e formulação de rações para ovinos. Baseado na tabela NRC (2007) e nas tabelas do Valadares Filho (2010), a ferramenta permite o cadastro de propriedades, lotes e ingredientes personalizados, além de sugerir e balancear formulações nutricionais de forma inteligente.
 
-## 🚀 Funcionalidades Principais
+## Funcionalidades Principais
 - **Autenticação:** Criação, edição e acesso a contas de usuário com JWT.
 - **Gestão de Propriedades e Lotes:** Gerencie suas propriedades rurais e os rebanhos de ovinos.
 - **Ingredientes:** Utilize um vasto banco de dados referenciado ou crie seus próprios ingredientes customizados.
@@ -12,22 +12,45 @@ O **OvinoCerto** é uma aplicação web voltada para a otimização e automatiza
 - **Formulação Inteligente:**
   - Adição de ingredientes com proporções calculadas pelo sistema.
   - Ajuste manual (travamento) da porcentagem de ingredientes.
-  - Sugestões inteligentes de substituição baseadas em custo, proteína ou fibra.
+  - Sugestões inteligentes de substituição baseadas em custo ou deficiencias nutricionais na formulação.
   - Edição dos nutrientes da exigência utilizando operadores lógicos para guiar o balanceamento (`<=`, `>=`, `=`, `ENTRE`).
   - Filtros avançados para otimização de custo da ração.
+
+*Ainda em desenvolvimento**
+
+## Sumário
+
+- [🐑 OvinoCerto 2.6](#-ovinocerto-26)
+  - [Sobre o Projeto](#sobre-o-projeto)
+  - [Funcionalidades Principais](#funcionalidades-principais)
+  - [Sumário](#sumário)
+  - [Regras importantes da formulação](#regras-importantes-da-formulação)
+  - [Requisitos](#requisitos)
+  - [Instalação](#instalação)
+  - [Como o sistema está organizado](#como-o-sistema-está-organizado)
+  - [Diagramas](#diagramas)
+  - [API e documentação interativa](#api-e-documentação-interativa)
+    - [Documentação interativa](#documentação-interativa)
+    - [1. Autenticação (`/api/auth`)](#1-autenticação-apiauth)
+    - [2. Usuários (`/api/usuarios`)](#2-usuários-apiusuarios)
+    - [3. Propriedades (`/api/propriedades`)](#3-propriedades-apipropriedades)
+    - [4. Lotes (Ovinos) (`/api/lotes`)](#4-lotes-ovinos-apilotes)
+    - [5. Ingredientes (`/api/ingredientes`)](#5-ingredientes-apiingredientes)
+    - [6. Exigências Nutricionais (`/api/exigencias`)](#6-exigências-nutricionais-apiexigencias)
+    - [7. Formulação (`/api/formulacoes`)](#7-formulação-apiformulacoes)
+      - [Fluxo Principal \& Criação](#fluxo-principal--criação)
+      - [Gestão de Ingredientes na Dieta](#gestão-de-ingredientes-na-dieta)
+      - [Metas (Exigências) e Recálculo](#metas-exigências-e-recálculo)
+      - [Dados da Dieta](#dados-da-dieta)
+      - [Custos e Viabilidade](#custos-e-viabilidade)
+      - [Histórico, Versões e Auditoria (Snapshots)](#histórico-versões-e-auditoria-snapshots)
 
 
 ## Regras importantes da formulação
 
-- `ms_porcent` é salvo no banco em percentual de `0` a `100`.
-- Os motores trabalham com frações de `0` a `1`.
-- A soma das participações deve terminar em `1.0`, isto é, 100% da MS.
 - O percentual de volumoso informado é um alvo estrutural rígido.
 - Limites máximos por ingrediente são rígidos na geração e na redistribuição.
 - Participações `MANUAL_TRAVADA` não são alteradas automaticamente.
-- Exigências nutricionais são atendidas por melhor esforço. Se a seleção de
-  ingredientes não permitir atendê-las, a estrutura da dieta continua válida e
-  os desvios aparecem como alertas.
 - O preço regional pertence ao usuário. Um preço local da receita não altera o
   catálogo nem outras formulações.
 - Parâmetros de viabilidade são uma cópia de simulação: editá-los não altera o
@@ -62,8 +85,18 @@ Os apps do backend têm responsabilidades bem separadas:
 | `formulacao` | Formulação, recálculo, alertas, custos, versões e viabilidade. |
 
 
+## Diagramas
+- Diagrama de classes UML
+- Fluxograma de navegação
 
-## 📚 API e documentação interativa
+
+📂 [docs](docs)  
+    ├── 📄 [diagrama_classe.png](docs/diagrama_classe.png)  
+    └── 📄 [fluxo_navegacao.pdf](docs/fluxo_navegacao.png)  
+
+*Em constante atualização***
+
+## API e documentação interativa
 
 ### Documentação interativa
 - Swagger: `http://localhost:8000/api/schema/swagger-ui/`
@@ -112,10 +145,12 @@ Os apps do backend têm responsabilidades bem separadas:
 |--------|----------|-----------|
 | `GET`  | `/api/ingredientes/` | Lista todos os ingredientes (Valadares e Customizados). Suporta diversos filtros. |
 | `POST` | `/api/ingredientes/` | Cria um novo ingrediente customizado. |
+| `POST` | `/api/ingredientes/adicionar/` | Mantém a rota legada usando a criação padrão de ingredientes. |
 | `GET`  | `/api/ingredientes/meus/` | Atalho: Lista exclusivamente os ingredientes criados pelo usuário logado. |
 | `GET`  | `/api/ingredientes/tipos/` | Retorna as opções disponíveis de classificação (volumoso, concentrado, etc) e tipos. |
 | `GET`  | `/api/ingredientes/{id}/` | Visualiza os detalhes nutricionais de um ingrediente específico. |
 | `PUT` / `PATCH` | `/api/ingredientes/{id}/` | Atualiza um ingrediente (ação permitida apenas para ingredientes customizados do usuário). |
+| `PUT` / `PATCH` | `/api/ingredientes/{id}/editar/` | Edita total ou parcialmente um ingrediente customizado permitido. |
 | `DELETE` | `/api/ingredientes/{id}/` | Exclui um ingrediente customizado. |
 
 ### 6. Exigências Nutricionais (`/api/exigencias`)
@@ -139,6 +174,7 @@ Os apps do backend têm responsabilidades bem separadas:
 | `POST` | `/api/formulacoes/{id}/gerar/` | **Etapa 2:** Calcula a distribuição inicial e adiciona os ingredientes à ração. |
 | `GET`  | `/api/formulacoes/{id}/` | Retorna o panorama completo de uma formulação. |
 | `PUT` / `PATCH` | `/api/formulacoes/{id}/` | Atualiza os dados bases e observações da formulação. |
+| `PATCH`| `/api/formulacoes/{id}/percentual-volumoso/` | Atualiza o alvo rígido de volumosos configurado na formulação. |
 | `DELETE` | `/api/formulacoes/{id}/` | Exclui completamente a formulação do banco de dados. |
 
 #### Gestão de Ingredientes na Dieta
@@ -149,10 +185,9 @@ Os apps do backend têm responsabilidades bem separadas:
 | `DELETE` | `/api/formulacoes/{id}/ingredientes/{ing_form_id}/` | Remove um ingrediente específico da formulação. |
 | `PATCH` | `/api/formulacoes/{id}/ingredientes/{ing_form_id}/ajustar/` | Ajusta a porcentagem manualmente, travando o ingrediente e disparando recálculo automático. |
 | `POST` | `/api/formulacoes/{id}/ingredientes/{ing_form_id}/destravar/` | Remove a trava de um ingrediente, permitindo sua redistribuição automática na próxima alteração. |
-| `GET`  | `/api/formulacoes/{id}/sugestoes/` | Analisa a dieta e gera sugestões inteligentes de adição |
-| `GET`  | `/api/formulacoes/{id}/sugestoes/?modo=substituir&ing_form_id=X ` | Analisa a dieta e gera sugestões inteligentes de substituição de um ingrediente X. |
+| `GET`  | `/api/formulacoes/{id}/sugestoes/` | Analisa a dieta e gera sugestões inteligentes de adição. |
+| `GET`  | `/api/formulacoes/{id}/sugestoes/?modo=substituir&ing_form_id=X` | Analisa a dieta e gera sugestões inteligentes de substituição de um ingrediente X. |
 | `GET`  | `/api/formulacoes/{id}/sugestoes/?criterio=custo_beneficio` | Analisa a dieta e gera sugestões inteligentes de ingredientes de menor custo, seja para adição ou substituição. |
-
 
 #### Metas (Exigências) e Recálculo
 | Método | Endpoint | Descrição |
@@ -163,15 +198,23 @@ Os apps do backend têm responsabilidades bem separadas:
 | `POST` | `/api/formulacoes/{id}/recalcular/` | Aciona o recálculo do balanceamento da ração após alterações na configuração. |
 | `GET`  | `/api/formulacoes/{id}/resultado/` | Traz a análise e o resultado final da eficácia da dieta montada. |
 
+#### Dados da Dieta
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| `GET` | `/api/formulacoes/{id}/dados-dieta/` | Agrega dieta detalhada, resumo por classificação, mistura concentrada e comparação nutricional do último snapshot, usando a quantidade salva. |
+| `PATCH` | `/api/formulacoes/{id}/dados-dieta/` | Salva `quantidade_mistura_mn_kg` e devolve imediatamente os blocos derivados atualizados. |
+
+
+
 #### Custos e Viabilidade
 | Método | Endpoint | Descrição |
 |--------|----------|-----------|
-| `PATCH` | `/api/ingredientes/{id}/preco/` | Personaliza o preço (kg) do ingredinte no banco de dados do usuário (fica salvo para as formulações). |
-| `PATCH` | `/formulacoes/{id}/ingredientes/{ing_form_id}/preco/` | Personaliza o preço (kg) do ingredinte, podendo valer só para a receita, ou ser gravado no banco de dados do usuário (`"receita"` | `"geral"`). |
-| `POST` | `/formulacoes/{id}/viabilidade/parametros/` | Edita o quadro de índices zootécnicos e valor R$/Kg PV para a viabilidade conforme o lote atualizado. |
-| `GET`  | `/api/formulacoes/{id}/viabilidade/` | Custos e viabilidade da dieta. Visualiza custos por ingrediente e animal detalhadamente, além do preço minimo de venda e lucro. |
+| `PATCH` | `/api/ingredientes/{id}/preco/` | Personaliza o preço (kg) do ingrediente no banco de dados do usuário (fica salvo para as formulações). |
+| `PATCH` | `/api/formulacoes/{id}/ingredientes/{ing_form_id}/preco/` | Personaliza o preço (kg) do ingrediente, podendo valer só para a receita, ou ser gravado no banco de dados do usuário (`"receita"` ou `"geral"`). |
+| `POST` | `/api/formulacoes/{id}/viabilidade/parametros/` | Edita o quadro de índices zootécnicos e valor R$/Kg PV para a viabilidade conforme o lote atualizado. |
+| `PATCH` | `/api/formulacoes/{id}/viabilidade/parametros/` | Atualiza parcialmente (apenas os campos enviados) os índices zootécnicos e o preço de venda para a viabilidade. |
+| `GET`  | `/api/formulacoes/{id}/viabilidade/` | Custos e viabilidade da dieta. Visualiza custos por ingrediente e animal detalhadamente, além do preço mínimo de venda e lucro. |
 | `GET`  | `/api/formulacoes/{id}/custos/` | Visualiza os valores de custo da MN, MS, animal e lote por dia além das especificações de custos por ingrediente. |
-
 
 #### Histórico, Versões e Auditoria (Snapshots)
 | Método | Endpoint | Descrição |
@@ -180,6 +223,3 @@ Os apps do backend têm responsabilidades bem separadas:
 | `GET`  | `/api/formulacoes/{id}/versoes/` | Lista os 'snapshots' (versões congeladas no tempo) desta formulação. |
 | `GET`  | `/api/formulacoes/{id}/versoes/{versao_num}/` | Visualiza os ingredientes e dados de uma versão/snapshot específica. |
 | `POST` | `/api/formulacoes/{id}/versoes/{versao_num}/restaurar/` | Restaura a formulação atual revertendo os dados para uma versão anterior. |
-
-
-(ainda em desenvolvimento)

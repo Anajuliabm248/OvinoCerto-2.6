@@ -4,18 +4,18 @@ MotorViabilidade — Quadros 9 a 14 da planilha "Custos e Viabilidade da Dieta".
 Motor puro, sem I/O — mesmo contrato de MotorCusto/MotorRecalculo.
 
 Mapeamento Quadro -> aqui
-  Quadro 9  (Dados do(s) animal(s))   -> fora deste motor: leitura direta
+  Quadro 4  (Dados do(s) animal(s))   -> fora deste motor: leitura direta
                                           de Lote/ExigenciaConfigurada,
                                           sem cálculo (espécie, raça,
                                           categoria, peso NRC).
-  Quadro 10 (Índices Zootécnicos)     -> ParametrosViabilidade (input) +
+  Quadro 5 (Índices Zootécnicos)     -> ParametrosViabilidade (input) +
                                           IndicesZootecnicos (calculado).
-  Quadro 11 (Custos Finais da Dieta)  -> LinhaCustoIngrediente[] + totais.
-  Quadro 12 (Preço mínimo p/ lucro)   -> SaidaViabilidade.preco_minimo_kg_pv.
-  Quadro 13 (Valor R$/kg PV)          -> ParametrosViabilidade.preco_venda_kg_pv
+  Quadro 6 (Custos Finais da Dieta)  -> LinhaCustoIngrediente[] + totais.
+  Quadro 7 (Preço mínimo p/ lucro)   -> SaidaViabilidade.preco_minimo_kg_pv.
+  Quadro 8 (Valor R$/kg PV)          -> ParametrosViabilidade.preco_venda_kg_pv
                                           (é um INPUT do usuário, não algo
                                           calculado por este motor).
-  Quadro 14 (Resultado Econômico)     -> resultado_animal / resultado_lote.
+  Quadro 9 (Resultado Econômico)     -> resultado_animal / resultado_lote.
 
 IMPORTANTE — separação de responsabilidade (requisito explícito):
 os parâmetros de ParametrosViabilidade (num_animais, gmd_esperado_kg,
@@ -34,7 +34,7 @@ de peso vivo, ex. 2.97 %) usado só para projetar consumo ao longo do
 período de confinamento — não é a exigência nutricional oficial. Os
 dois NUNCA devem ser confundidos nem sincronizados automaticamente.
 
-`participacao_mn_percentual` (coluna D do Quadro 11) é a participação
+`participacao_mn_percentual` (coluna D do Quadro 6) é a participação
 de cada ingrediente em base de matéria natural (MN), ANTES de aplicar
 perdas — não confundir com a participação em %MS (`fracoes_ms`, que
 vem de ParticipacaoVetor e é a base de toda a adequação nutricional).
@@ -50,19 +50,19 @@ import numpy as np
 
 @dataclass(frozen=True)
 class ParametrosViabilidade:
-    """Quadro 10 (+ Quadro 13) — entrada editável, independente do Lote/Exigência."""
+    """Quadro 5 (+ Quadro 8) — entrada editável, independente do Lote/Exigência."""
     num_animais: int
     gmd_esperado_kg: float
     estimativa_permanencia_dias: int
     peso_entrada_kg: float
     cms_percentual_pv: float             # fração 0-1, ex. 0.0297 = 2.97 % do PV
     perdas_alimentos_percentual: float   # fração 0-1, ex. 0.08 = 8 %
-    preco_venda_kg_pv: float             # Quadro 13, R$/kg de peso vivo
+    preco_venda_kg_pv: float | None      # Quadro 8, R$/kg de peso vivo
 
 
 @dataclass(frozen=True)
 class IndicesZootecnicos:
-    """Resultado calculado do Quadro 10 (equivalentes a E15-E18 da planilha)."""
+    """Resultado calculado do Quadro 5 (equivalentes a E15-E18 da planilha)."""
     peso_saida_kg: float
     ganho_peso_kg: float
     peso_ajustado_kg: float
@@ -71,7 +71,7 @@ class IndicesZootecnicos:
 
 @dataclass(frozen=True)
 class LinhaCustoIngrediente:
-    """Uma linha do Quadro 11."""
+    """Uma linha do Quadro 6."""
     ingrediente_id: int | None
     nome: str
     participacao_mn_percentual: float   # D: % (MN), share do ingrediente em MN, pré-perdas
@@ -87,7 +87,7 @@ class LinhaCustoIngrediente:
 
 @dataclass(frozen=True)
 class ResultadoEconomicoLinha:
-    """Uma linha (Animal ou Lote) do Quadro 14."""
+    """Uma linha (Animal ou Lote) do Quadro 9."""
     renda_bruta_total: float
     custo_total: float
     custo_por_dia: float
@@ -107,9 +107,9 @@ class SaidaViabilidade:
     investimento_total_geral: float
     custo_por_animal_total: float
     custo_por_animal_dia_total: float
-    preco_minimo_kg_pv: float                   # Quadro 12
-    resultado_animal: ResultadoEconomicoLinha    # Quadro 14, linha "Animal"
-    resultado_lote: ResultadoEconomicoLinha      # Quadro 14, linha "Lote"
+    preco_minimo_kg_pv: float | None
+    resultado_animal: ResultadoEconomicoLinha | None
+    resultado_lote: ResultadoEconomicoLinha | None
 
 
 class MotorViabilidade:
@@ -197,25 +197,28 @@ class MotorViabilidade:
         custo_por_animal_total     = float(custo_por_animal.sum())
         custo_por_animal_dia_total = float(custo_por_animal_dia.sum())
 
-        # Quadro 12: preço mínimo (R$/kg de PV) para não ter prejuízo com a dieta
-        preco_minimo_kg_pv = (
-            custo_por_animal_total / indices.ganho_peso_kg
-            if indices.ganho_peso_kg > 0 else 0.0
-        )
-
-        # Quadro 14
-        resultado_animal = MotorViabilidade._resultado_economico(
-            renda_bruta_total=indices.ganho_peso_kg * p.preco_venda_kg_pv,
-            custo_total=custo_por_animal_total,
-            dias=p.estimativa_permanencia_dias,
-        )
-        resultado_lote = MotorViabilidade._resultado_economico(
-            renda_bruta_total=(
-                indices.ganho_peso_kg * p.preco_venda_kg_pv * p.num_animais
-            ),
-            custo_total=investimento_total_geral,
-            dias=p.estimativa_permanencia_dias,
-        )
+        preco_minimo_kg_pv = None
+        resultado_animal = None
+        resultado_lote = None
+        if p.preco_venda_kg_pv is not None:
+            # Quadros 7 e 9 só fazem sentido quando o cenário econômico
+            # inclui o preço de venda do peso vivo (Quadro ).
+            preco_minimo_kg_pv = (
+                custo_por_animal_total / indices.ganho_peso_kg
+                if indices.ganho_peso_kg > 0 else 0.0
+            )
+            resultado_animal = MotorViabilidade._resultado_economico(
+                renda_bruta_total=indices.ganho_peso_kg * p.preco_venda_kg_pv,
+                custo_total=custo_por_animal_total,
+                dias=p.estimativa_permanencia_dias,
+            )
+            resultado_lote = MotorViabilidade._resultado_economico(
+                renda_bruta_total=(
+                    indices.ganho_peso_kg * p.preco_venda_kg_pv * p.num_animais
+                ),
+                custo_total=investimento_total_geral,
+                dias=p.estimativa_permanencia_dias,
+            )
 
         return SaidaViabilidade(
             indices=indices,
@@ -270,7 +273,7 @@ class MotorViabilidade:
             raise ValueError('O percentual de CMS deve ser uma fração entre 0 e 1.')
         if not 0 <= p.perdas_alimentos_percentual <= 1:
             raise ValueError('As perdas devem ser uma fração entre 0 e 1.')
-        if p.preco_venda_kg_pv < 0:
+        if p.preco_venda_kg_pv is not None and p.preco_venda_kg_pv < 0:
             raise ValueError('O preço de venda não pode ser negativo.')
 
     @staticmethod

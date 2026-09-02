@@ -1,51 +1,141 @@
 <template>
-  <PageCard
-    title="Geração de Formulações"
-    subtitle="1. Escolha Ingredientes para sua formulação"
-  >
-    <template #top-tabs>
-      <TabsHeader
-        v-model="activeTab"
-        :tabs="tabs"
-      />
-    </template>
+  <div class="ingredients-page">
+    <Header />
 
-    <template #top-bar-extra>
-      <button class="btn-selected" type="button">
-        Ingredientes Selecionados
-        <span
-          v-if="selectedIngredients.length"
-          class="selected-count"
+    <main class="content">
+
+      <div class="tabs">
+        <button
+          :class="['tab', { active: activeTab === 'sistema' }]"
+          @click="activeTab = 'sistema'"
         >
-          {{ selectedIngredients.length }}
-        </span>
-      </button>
-    </template>
+          Ingredientes do Sistema
+        </button>
 
-    <Tabela
-      :columns="colunas"
-      :rows="linhas"
-      v-model:selected="selectedIngredients"
-      :current-page="paginaAtual"
-      @update:current-page="paginaAtual = $event"
-      @update:total-pages="totalPaginas = $event"
-    />
+        <button
+          :class="['tab', { active: activeTab === 'usuario' }]"
+          @click="activeTab = 'usuario'"
+        >
+          Ingredientes do Usuário
+        </button>
+      </div>
 
-    <template #actions>
-      <Botao
-        label="Próxima etapa"
-        :to="{ path: '/formulacoes/exigencias' }"
-      />
-    </template>
+      <div class="ingredients-card">
 
-    <template #pagination>
-      <Paginacao
-        :total-pages="totalPaginas"
-        :current-page="paginaAtual"
-        @update:current-page="paginaAtual = $event"
-      />
-    </template>
-  </PageCard>
+        <div class="top-bar">
+          <div>
+            <h3>Geração de Formulações</h3>
+
+            <p class="subtitle">
+              1. Escolha Ingredientes para sua formulação
+            </p>
+          </div>
+
+          <button class="btn-action">
+            Ingredientes Selecionados
+            <span
+              v-if="selectedIngredients.length"
+              class="selected-count"
+            >
+              {{ selectedIngredients.length }}
+            </span>
+          </button>
+        </div>
+
+        <div class="table-controls">
+          <div class="rows-selector">
+            Exibir
+
+            <select>
+              <option>10</option>
+              <option>25</option>
+              <option>50</option>
+            </select>
+
+            Linhas
+          </div>
+
+          <input
+            type="text"
+            placeholder="Pesquisar"
+            class="search-input"
+          />
+        </div>
+
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Seleção</th>
+                <th>Classificação</th>
+                <th>Tipo</th>
+                <th>Ingrediente</th>
+                <th>MS(%)</th>
+                <th>PB(%)</th>
+                <th>NDT(%)</th>
+                <th>FDN(%)</th>
+                <th>EE(%)</th>
+                <th>C(%)</th>
+                <th>P(%)</th>
+                <th>R$ (kg/MN)</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              <tr
+                v-for="i in 10"
+                :key="i"
+              >
+                <td>
+                  <button
+                    type="button"
+                    :class="['select-dot', { active: isSelected(i) }]"
+                    @click="toggleSelection(i)"
+                  />
+                </td>
+                <td>Volumoso</td>
+                <td>Forragens Secas</td>
+                <td>Alfafa Feno</td>
+                <td>89.30</td>
+                <td>18.49</td>
+                <td>58.51</td>
+                <td>46.78</td>
+                <td>2.52</td>
+                <td>1.32</td>
+                <td>1.23</td>
+                <td>R$ 5,00</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="bottom-bar">
+
+          <button class="btn-save">
+            <RouterLink
+              to="/formulacoes/exigencias"
+              class="nav-item"
+            >
+              Próxima etapa
+            </RouterLink>
+          </button>
+
+          <div class="pagination">
+            <button class="page active">1</button>
+            <button class="page">2</button>
+            <button class="page">3</button>
+
+            <span>...</span>
+
+            <button class="page">99</button>
+          </div>
+
+        </div>
+
+      </div>
+
+    </main>
+  </div>
 </template>
 
 <script setup>

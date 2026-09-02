@@ -15,12 +15,15 @@ from __future__ import annotations
 
 import numpy as np
 from django.db import transaction
+from django.db.models import Sum
 
+from ingrediente.models import PrecoIngredienteUsuario
 from formulacao.domain.nutrientes import NUTRIENTES_ORDEM, Nutriente
 from formulacao.domain.participacao import OrigemParticipacao, ParticipacaoVetor
 from formulacao.domain.vetor_nutricional import VetorNutricional
 from formulacao.engines.motor_recalculo import SaidaRecalculo
 from formulacao.engines.motor_custo import SaidaCusto
+from formulacao.engines.motor_dados_dieta import LinhaDadosDietaEntrada
 from formulacao.models import Formulacao, IngredienteFormulacao, OrigemParticipacaoChoices
 
 
@@ -74,6 +77,20 @@ class IngredienteFormulacaoRepository:
             fracoes=fracoes,
             origens=origens,
         )
+
+    @staticmethod
+    def get_percentual_volumoso_aplicado(formulacao_id: int) -> float:
+        """Soma volumosos no banco 0-100 e devolve a fracao de dominio 0-1."""
+        soma_percentual = (
+            IngredienteFormulacao.objects
+            .filter(
+                formulacao_id=formulacao_id,
+                ingrediente__classificacao__iexact="volumoso",
+            )
+            .aggregate(soma=Sum("ms_porcent"))["soma"]
+            or 0.0
+        )
+        return float(soma_percentual) / 100.0
 
     @staticmethod
     def get_vetores_nutricionais(formulacao_id: int) -> list[VetorNutricional]:
@@ -152,7 +169,7 @@ class IngredienteFormulacaoRepository:
         """
         Retorna (nomes, ingrediente_ids), na MESMA ordem de
         get_participacao()/get_dados_custo() — usado pelo
-        MotorViabilidade para rotular cada linha do Quadro 11.
+        MotorViabilidade para rotular cada linha do Quadro 6.
 
         Ingrediente removido (SET_NULL): nome="(removido)", id=None.
         """
@@ -197,8 +214,6 @@ class IngredienteFormulacaoRepository:
         removido (SET_NULL) entra com custo 0.0 e ms 0.0 — mesmo
         tratamento dado em get_vetores_nutricionais.
         """
-        from ingrediente.models import PrecoIngredienteUsuario
-
         usuario_id = (
             Formulacao.objects
             .values_list("usuario_id", flat=True)
@@ -236,6 +251,63 @@ class IngredienteFormulacaoRepository:
             np.array(custos, dtype=float),
             np.array(ms_percentuais, dtype=float),
         )
+
+    @staticmethod
+    def get_linhas_dados_dieta(
+        formulacao_id: int,
+    ) -> tuple[LinhaDadosDietaEntrada, ...]:
+        """Entrega linhas alinhadas e resolve preço sem ocultar ausência."""
+        usuario_id = (
+            Formulacao.objects
+            .values_list("usuario_id", flat=True)
+            .get(id=formulacao_id)
+        )
+        linhas = list(
+            IngredienteFormulacao.objects
+            .filter(formulacao_id=formulacao_id)
+            .select_related("ingrediente")
+            .order_by("id")
+        )
+        ids_ingredientes = [
+            linha.ingrediente_id for linha in linhas if linha.ingrediente_id
+        ]
+        precos_usuario = dict(
+            PrecoIngredienteUsuario.objects
+            .filter(
+                usuario_id=usuario_id,
+                ingrediente_id__in=ids_ingredientes,
+            )
+            .values_list("ingrediente_id", "preco_kg_mn")
+        )
+
+        saida = []
+        for linha in linhas:
+            ingrediente = linha.ingrediente
+            if linha.custo_kg_mn_override is not None:
+                preco = float(linha.custo_kg_mn_override)
+            elif ingrediente is not None and ingrediente.id in precos_usuario:
+                preco = float(precos_usuario[ingrediente.id])
+            else:
+                preco = None
+            saida.append(LinhaDadosDietaEntrada(
+                ing_form_id=linha.id,
+                ingrediente_id=linha.ingrediente_id,
+                classificacao=(
+                    ingrediente.classificacao if ingrediente is not None else ""
+                ),
+                tipo=ingrediente.tipo if ingrediente is not None else "",
+                nome=ingrediente.nome if ingrediente is not None else "(removido)",
+                ms_percentual_ingrediente=(
+                    float(ingrediente.ms) if ingrediente is not None else None
+                ),
+                ms_kg_dia=float(linha.ms_kg),
+                mn_kg_dia=float(linha.mn_kg),
+                participacao_ms_percentual=float(linha.ms_porcent),
+                preco_kg_mn=preco,
+                custo_dia=float(linha.custo_dia),
+                origem_custo=linha.origem_custo,
+            ))
+        return tuple(saida)
 
     @staticmethod
     def get_num_animais(formulacao_id: int) -> int:

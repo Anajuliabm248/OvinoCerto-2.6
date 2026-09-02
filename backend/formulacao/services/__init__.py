@@ -7,13 +7,19 @@ from .atualizar_percentual_volumoso_service import AtualizarPercentualVolumosoSe
 from .gerar_formulacao_inicial_service import GerarFormulacaoInicialService
 from .iniciar_formulacao_service import IniciarFormulacaoService
 from .recalcular_formulacao_service import RecalcularFormulacaoService
+from .readequar_formulacao_service import ReadequarFormulacaoService
 from .remover_ingrediente_service import RemoverIngredienteService
 from .sugerir_ingredientes_service import SugerirIngredientesService
 from .restaurar_versao_service import RestaurarVersaoService
 from .recalcular_custo_service import RecalcularCustoService
 from .atualizar_preco_ingrediente_service import AtualizarPrecoIngredienteService
 from .calcular_viabilidade_service import CalcularViabilidadeService
+from .calcular_dados_dieta_service import (
+    CalcularDadosDietaService,
+    DadosDietaNaoCalculadosError,
+)
 from .atualizar_parametros_viabilidade_service import AtualizarParametrosViabilidadeService
+from .atualizar_quantidade_mistura_service import AtualizarQuantidadeMisturaService
 
 __all__ = [
     'AdicionarIngredienteService',
@@ -23,11 +29,15 @@ __all__ = [
     'GerarFormulacaoInicialService',
     'IniciarFormulacaoService',
     'RecalcularFormulacaoService',
+    'ReadequarFormulacaoService',
     'RemoverIngredienteService',
     'SugerirIngredientesService',
     'RestaurarVersaoService',
     'RecalcularCustoService',
     'AtualizarPrecoIngredienteService',
     'CalcularViabilidadeService',
+    'CalcularDadosDietaService',
+    'DadosDietaNaoCalculadosError',
     'AtualizarParametrosViabilidadeService',
+    'AtualizarQuantidadeMisturaService',
 ]

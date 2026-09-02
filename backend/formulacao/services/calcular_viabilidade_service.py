@@ -34,8 +34,11 @@ class CalcularViabilidadeService:
     """Monta os vetores da receita e executa a projeção econômica atual."""
 
     @staticmethod
-    def executar(formulacao_id: int) -> SaidaViabilidade:
-        """Carrega participações, preços e parâmetros antes de chamar o motor puro."""
+    def executar(
+        formulacao_id: int,
+        incluir_quadros_economicos: bool = True,
+    ) -> SaidaViabilidade:
+        """Calcula custos para todos os ovinos e economia apenas quando aplicável."""
         participacao: ParticipacaoVetor = IngredienteFormulacaoRepository.get_participacao(
             formulacao_id
         )
@@ -52,13 +55,6 @@ class CalcularViabilidadeService:
         )
 
         parametros_db = ParametrosViabilidadeRepository.get_ou_criar_default(formulacao_id)
-        if parametros_db.preco_venda_kg_pv is None:
-            raise ValueError(
-                "Defina o preço de venda (R$/kg de PV) antes de calcular a "
-                "viabilidade — Quadro 13. Use "
-                "PATCH /formulacoes/{id}/viabilidade/parametros/."
-            )
-
         parametros_vo = ParametrosViabilidadeVO(
             num_animais=parametros_db.num_animais,
             gmd_esperado_kg=parametros_db.gmd_esperado_kg,
@@ -66,7 +62,10 @@ class CalcularViabilidadeService:
             peso_entrada_kg=parametros_db.peso_entrada_kg,
             cms_percentual_pv=parametros_db.cms_percentual_pv,
             perdas_alimentos_percentual=parametros_db.perdas_alimentos_percentual,
-            preco_venda_kg_pv=parametros_db.preco_venda_kg_pv,
+            preco_venda_kg_pv=(
+                parametros_db.preco_venda_kg_pv
+                if incluir_quadros_economicos else None
+            ),
         )
 
         return MotorViabilidade.calcular(
