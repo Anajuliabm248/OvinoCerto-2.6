@@ -1,6 +1,6 @@
 <template>
   <div class="page">
-    <Header />
+    <Header theme="light" />
     <main class="content">
       <h1>Propriedades da Formulação</h1>
       <p>Configuração de propriedades em desenvolvimento.</p>

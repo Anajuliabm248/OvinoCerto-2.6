@@ -19,91 +19,157 @@
         Crie sua conta
       </p>
 
-      <form @submit.prevent="login">
-
+      <form @submit.prevent="cadastrar">
         <div class="input-row">
-          <input placeholder="Nome" v-model="nome">
-          <input placeholder="Sobrenome">
-          <input placeholder="Estado">
-          <input placeholder="Cidade">
+          <input v-model="nome" placeholder="Nome completo">
+          <input v-model="cpf" placeholder="CPF">
+          <input v-model="estado" placeholder="Estado">
+          <input v-model="cidade" placeholder="Cidade">
         </div>
 
         <div class="input-row">
-          <input placeholder="Email">
-          <input placeholder="Celular">
-          <input placeholder="Senha">
-          <input placeholder="Confirmar Senha">
+          <input v-model="email" placeholder="Email" type="email">
+          <input v-model="telefone" placeholder="Telefone">
+          <input v-model="profissao" placeholder="Profissão">
+        </div>
+
+        <div class="input-row password-row">
+          <input v-model="password" placeholder="Senha" type="password">
+          <input v-model="password2" placeholder="Confirmar Senha" type="password">
         </div>
 
         <div class="checkbox-group">
           <label class="checkbox-item">
-            <input
-              type="checkbox"
-              v-model="consideraImportante"
-            >
+            <input type="checkbox" v-model="consideraImportante">
             <span>
               Considera importante um software para formulação de rações e planejamento na ovinocultura?
             </span>
           </label>
 
           <label class="checkbox-item">
-            <input
-              type="checkbox"
-              v-model="produtorOvinos"
-            >
+            <input type="checkbox" v-model="produtorOvinos">
             <span>
               É produtor de ovinos?
             </span>
           </label>
 
           <label class="checkbox-item">
-            <input
-              type="checkbox"
-              v-model="aceitaTermos"
-              required
-            >
+            <input type="checkbox" v-model="aceitaTermos" required>
             <span>
               Declaro que li e aceito os Termos de Uso
             </span>
           </label>
         </div>
-      
-        <button type="submit">
-          Cadastrar
+
+        <p v-if="erroMensagem" class="erro-mensagem">
+          {{ erroMensagem }}
+        </p>
+
+        <button type="submit" :disabled="carregando">
+          {{ carregando ? 'Cadastrando...' : 'Cadastrar' }}
         </button>
-
       </form>
-
-
     </div>
   </div>
 </template>
 
 <script setup>
 import { ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { autenticacaoAPI } from '@/services/api'
+import { useAuthStore } from '@/stores/auth'
+
+const router = useRouter()
+const authStore = useAuthStore()
 
 const email = ref('')
 const password = ref('')
+const password2 = ref('')
 const nome = ref('')
-const sobrenome = ref('')
+const cpf = ref('')
 const estado = ref('')
 const cidade = ref('')
-
-
-function login() {
-  console.log({
-    email: email.value,
-    password: password.value,
-    nome: nome.value,
-    sobrenome: sobrenome.value,
-    estado: estado.value,
-    cidade: cidade.value
-  })
-}
+const telefone = ref('')
+const profissao = ref('')
+const carregando = ref(false)
+const erroMensagem = ref('')
 
 const consideraImportante = ref(false)
 const produtorOvinos = ref(false)
 const aceitaTermos = ref(false)
+
+async function cadastrar() {
+  if (!nome.value || !cpf.value || !email.value || !telefone.value || !estado.value || !cidade.value || !profissao.value) {
+    erroMensagem.value = 'Preencha todos os campos do perfil: nome completo, CPF, email, telefone, estado, cidade e profissão.'
+    return
+  }
+
+  if (!password.value || !password2.value) {
+    erroMensagem.value = 'Preencha a senha e a confirmação.'
+    return
+  }
+
+  if (password.value !== password2.value) {
+    erroMensagem.value = 'As senhas não coincidem.'
+    return
+  }
+
+  if (!aceitaTermos.value) {
+    erroMensagem.value = 'Você precisa aceitar os termos para continuar.'
+    return
+  }
+
+  carregando.value = true
+  erroMensagem.value = ''
+
+  try {
+    const payload = {
+      nome: nome.value.trim(),
+      email: email.value.trim(),
+      cpf: cpf.value.trim(),
+      telefone: telefone.value.trim(),
+      estado: estado.value.trim(),
+      cidade: cidade.value.trim(),
+      profissao: profissao.value.trim(),
+      produtor_ovinos: produtorOvinos.value,
+      password: password.value,
+      password2: password2.value,
+    }
+
+    const response = await autenticacaoAPI.register(payload)
+    const { access, refresh, usuario } = response.data || {}
+
+    if (access) {
+      authStore.setToken(access)
+    }
+
+    if (refresh) {
+      localStorage.setItem('auth_refresh_token', refresh)
+    }
+
+    if (usuario) {
+      authStore.setUser(usuario)
+    }
+
+    await authStore.fetchProfile()
+    router.push('/home')
+  } catch (error) {
+    console.error('Erro ao cadastrar:', error)
+    const detail = error.response?.data?.detail
+    const nonFieldErrors = error.response?.data?.non_field_errors
+    const erros = error.response?.data
+
+    if (erros && typeof erros === 'object') {
+      const primeiroErro = Object.values(erros).flat().find(Boolean)
+      erroMensagem.value = primeiroErro || 'Não foi possível concluir o cadastro.'
+      return
+    }
+
+    erroMensagem.value = detail || nonFieldErrors?.[0] || 'Não foi possível concluir o cadastro.'
+  } finally {
+    carregando.value = false
+  }
+}
 </script>
 
 <style scoped>
@@ -209,6 +275,10 @@ input:focus {
   width: 100%;
 }
 
+.password-row {
+  grid-template-columns: repeat(2, 1fr);
+}
+
 .input-row input {
   width: 100%;
   box-sizing: border-box;
@@ -238,18 +308,11 @@ button:hover {
   transform: translateY(-1px);
 }
 
-.forgot {
-  display: block;
-
-  margin-top: var(--space-md);
-
-  text-align: center;
-
-  color: var(--text);
-
-  text-decoration: none;
-
-  font-size: .9rem;
+.erro-mensagem {
+  margin: 0;
+  color: #b42318;
+  font-size: 0.9rem;
+  font-weight: 600;
 }
 
 .checkbox-group {

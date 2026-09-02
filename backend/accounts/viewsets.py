@@ -99,14 +99,13 @@ class UsuarioViewSet(
     @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
     def me(self, request):
         """Retorna o perfil ligado à conta autenticada ou uma resposta 404 clara."""
-        try:
-            usuario = request.user.perfil_usuario
-            return Response(UsuarioSerializer(usuario).data)
-        except Usuario.DoesNotExist:
+        perfil = getattr(request.user, 'perfil_usuario', None)
+        if perfil is None:
             return Response(
                 {'detail': 'Usuário sem perfil configurado.'},
                 status=status.HTTP_404_NOT_FOUND,
             )
+        return Response(UsuarioSerializer(perfil).data)
 
     @action(detail=True, methods=['patch'], permission_classes=[IsAuthenticated])
     def atualizar_perfil(self, request, pk=None):

@@ -1,6 +1,6 @@
 <template>
   <div class="frontpage">
-    <Header />
+    <Header theme="light" />
     <main class="content">
       <h1>Bem-vindo ao OvinoCerto</h1>
       <p>Esta é a página inicial da aplicação.</p>

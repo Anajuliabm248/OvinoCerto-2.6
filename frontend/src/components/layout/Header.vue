@@ -1,11 +1,11 @@
 <template>
-  <header class="header">
+  <header class="header" :class="`theme-${theme}`">
     <div class="header-inner">
 
       <!-- Logo -->
       <RouterLink to="/home" class="logo-container">
         <img
-          src="@/assets/logo_branca_2.png"
+          :src="logoSrc"
           alt="OvinoCerto"
           class="logo"
         >
@@ -81,6 +81,14 @@
           Formulações
         </RouterLink>
 
+        <RouterLink
+          v-if="authStore.isAdmin"
+          to="/admin"
+          class="nav-item admin-link"
+        >
+          Admin
+        </RouterLink>
+
       </nav>
 
       <!-- Ações -->
@@ -89,6 +97,7 @@
         <button
           class="logout"
           @click="logout"
+          title="Sair"
         >
           <svg
             viewBox="0 0 24 24"
@@ -108,7 +117,7 @@
           to="/conta"
           class="account"
         >
-          Conta
+          {{ userFirstName || 'Conta' }}
         </RouterLink>
 
       </div>
@@ -118,14 +127,31 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
+import logoPreta from '@/assets/logo_preta_2.png'
+import logoBranca from '@/assets/logo_branca_2.png'
+
+const props = defineProps({
+  theme: { type: String, default: 'dark' }, // 'dark' = fundo verde, 'light' = fundo bege
+})
 
 const dropdownOpen = ref(false)
-
 const router = useRouter()
+const authStore = useAuthStore()
+
+const logoSrc = computed(() => props.theme === 'dark' ? logoPreta : logoBranca)
+
+const userFirstName = computed(() => {
+  if (authStore.user && authStore.user.nome) {
+    return authStore.user.nome.split(' ')[0]
+  }
+  return ''
+})
 
 function logout() {
+  authStore.logout()
   router.push('/login')
 }
 </script>
@@ -133,16 +159,110 @@ function logout() {
 <style scoped>
 .header {
   height: 65px;
-  background: #5f7317;
-
   display: flex;
   align-items: center;
   justify-content: center;
-
   padding: 0 36px;
-
-  position: relative;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  width: 100%;
+  box-sizing: border-box;
+  transition: background-color .3s, color .3s;
 }
+
+/* Tema escuro: fundo verde, header bege com textos verdes */
+.header.theme-dark {
+  background: #f3efe2;
+}
+
+.header.theme-dark .nav-item {
+  color: #324507;
+}
+
+.header.theme-dark .nav-item:hover {
+  opacity: .8;
+}
+
+.header.theme-dark .dropdown-menu {
+  position: absolute;
+  top: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 168px;
+  padding: 6px;
+  background: #f3efe2;
+  border: 2px solid #f3efe2;
+  border-radius: 14px;
+  overflow: hidden;
+  z-index: 100;
+}
+
+.header.theme-dark .dropdown-item {
+  background: #f3efe2;
+  color: #324507;
+}
+
+.header.theme-dark .dropdown-item:hover {
+  background: #5f7317;
+  color: #324507;
+}
+
+/* Tema claro: fundo bege, header verde com textos bege */
+.header.theme-light {
+  background: #5f7317;
+}
+
+.header.theme-light .nav-item {
+  color: #f3efe2;
+}
+
+.header.theme-light .logo {
+  background-color: #324507;
+}
+
+.header.theme-light .account {
+  color: #f3efe2;
+}
+
+.header.theme-light .logout {
+  color: #f3efe2;
+}
+
+.header.theme-light .nav-item:hover {
+  opacity: .8;
+}
+
+.header.theme-light .dropdown-menu {
+  position: absolute;
+  top: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 168px;
+  padding: 6px;
+  border: 2px solid #5f7317;
+  background: #5f7317;
+  border-radius: 14px;
+  overflow: hidden;
+  z-index: 100;
+}
+
+.header.theme-light .dropdown-item {
+  background: #5f7317;
+  color: #f3efe2;
+}
+
+.header.theme-light .dropdown-item:hover {
+  background: #324507;
+  color: #f3efe2;
+}
+
+.header.theme-dark .logo {
+  background-color: #f3efe2;
+}
+
 
 .header-inner {
   width: 100%;
@@ -234,23 +354,6 @@ function logout() {
 /* ======================
    DROPDOWN
 ====================== */
-
-.dropdown-menu {
-  position: absolute;
-  top: 32px;
-  left: 50%;
-  transform: translateX(-50%);
-
-  min-width: 168px;
-  padding: 6px;
-
-  background: #5f7317;
-
-  border-radius: 14px;
-
-  overflow: hidden;
-  z-index: 100;
-}
 
 .dropdown-item {
   display: flex;

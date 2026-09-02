@@ -33,8 +33,12 @@
           placeholder="password"
         >
 
-        <button type="submit">
-          Entrar
+        <p v-if="errorMessage" class="error-message">
+          {{ errorMessage }}
+        </p>
+
+        <button type="submit" :disabled="loading">
+          {{ loading ? 'Entrando...' : 'Entrar' }}
         </button>
 
       </form>
@@ -49,15 +53,54 @@
 
 <script setup>
 import { ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { autenticacaoAPI } from '@/services/api'
+import { useAuthStore } from '@/stores/auth'
 
 const email = ref('')
 const password = ref('')
+const loading = ref(false)
+const errorMessage = ref('')
 
-function login() {
-  console.log({
-    email: email.value,
-    password: password.value
-  })
+const router = useRouter()
+const authStore = useAuthStore()
+
+async function login() {
+  if (!email.value || !password.value) {
+    errorMessage.value = 'Informe e-mail e senha.'
+    return
+  }
+
+  loading.value = true
+  errorMessage.value = ''
+
+  try {
+    const response = await autenticacaoAPI.login(email.value, password.value)
+    const { access, refresh, usuario } = response.data || {}
+
+    if (access) {
+      authStore.setToken(access)
+    }
+
+    if (refresh) {
+      localStorage.setItem('auth_refresh_token', refresh)
+    }
+
+    if (usuario) {
+      authStore.setUser(usuario)
+    } else {
+      await authStore.fetchProfile()
+    }
+
+    router.push('/home')
+  } catch (error) {
+    const detail = error.response?.data?.detail
+    const nonFieldErrors = error.response?.data?.non_field_errors
+
+    errorMessage.value = detail || nonFieldErrors?.[0] || 'E-mail ou senha inválidos.'
+  } finally {
+    loading.value = false
+  }
 }
 </script>
 

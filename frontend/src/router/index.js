@@ -36,6 +36,12 @@ const routes = [
     component: () => import('../pages/login/RecuperacaoSenha.vue'),
   },
   {
+    path: '/conta',
+    name: 'Conta',
+    component: () => import('../pages/login/Perfil.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
     path: '/formulacoes/dashboard',
     name: 'FormulacaoDashboard',
     component: () => import('../pages/formulacao/FormulacaoDashboard.vue'),
@@ -143,6 +149,36 @@ const routes = [
     component: () => import('../pages/ovinos/BancoOvinos.vue'),
     meta: { requiresAuth: false },
   },
+  {
+    path: '/admin',
+    name: 'AdminDashboard',
+    component: () => import('../pages/admin/AdminDashboard.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true },
+  },
+  {
+    path: '/admin/usuarios',
+    name: 'AdminUsuarios',
+    component: () => import('../pages/admin/AdminUsuarios.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true },
+  },
+  {
+    path: '/admin/configuracoes',
+    name: 'AdminConfiguracoes',
+    component: () => import('../pages/admin/AdminConfiguracao.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true },
+  },
+  {
+    path: '/admin/logs',
+    name: 'AdminLogs',
+    component: () => import('../pages/admin/AdminLogs.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true },
+  },
+  {
+    path: '/admin/permissoes',
+    name: 'AdminPermissoes',
+    component: () => import('../pages/admin/AdminPermissoes.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true },
+  },
 ]
 
 const router = createRouter({
@@ -150,18 +186,47 @@ const router = createRouter({
   routes,
 })
 
-// Guard de rotas - verificar autenticação
-router.beforeEach((to, from, next) => {
+// Guard de rotas - verificar autenticação e papel do usuário
+router.beforeEach(async (to, from, next) => {
   const authStore = useAuthStore()
   const requiresAuth = to.matched.some((record) => record.meta.requiresAuth)
+  const requiresAdmin = to.matched.some((record) => record.meta.requiresAdmin)
+  const isAdminRoute = to.matched.some((record) => record.meta.role === 'admin')
+
+  if (authStore.token && !authStore.user) {
+    try {
+      await authStore.fetchProfile()
+    } catch (error) {
+      authStore.logout()
+    }
+  }
 
   if (requiresAuth && !authStore.isAuthenticated) {
     next('/login')
-  } else if (to.path === '/login' && authStore.isAuthenticated) {
-    next('/')
-  } else {
-    next()
+    return
   }
+
+  if (isAdminRoute && !authStore.isAdmin) {
+    next('/home')
+    return
+  }
+
+  if (requiresAdmin && !authStore.isAdmin) {
+    next('/home')
+    return
+  }
+
+  if (to.meta.requireUserManagement && !authStore.canManageUsers) {
+    next('/home')
+    return
+  }
+
+  if (to.path === '/login' && authStore.isAuthenticated) {
+    next('/home')
+    return
+  }
+
+  next()
 })
 
 export default router

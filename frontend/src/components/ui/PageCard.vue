@@ -1,7 +1,7 @@
 <template>
-  <div class="page-shell">
+  <div class="page-shell" :class="{ 'admin-page-shell': variant === 'admin' }">
     <div class="page-header">
-      <Header />
+      <Header :theme="headerTheme" />
     </div>
 
     <main class="page-content">
@@ -9,7 +9,7 @@
 
         <slot name="top-tabs" />
 
-        <div class="page-card">
+        <div class="page-card" :class="{ 'admin-page-card': variant === 'admin' }">
 
           <div class="page-top-bar" v-if="title || $slots['top-bar-extra']">
             <div v-if="title">
@@ -47,6 +47,16 @@ import Header from '@/components/layout/Header.vue'
 defineProps({
   title: { type: String, default: '' },
   subtitle: { type: String, default: '' },
+  headerTheme: {
+    type: String,
+    default: 'light',
+    validator: (value) => ['light', 'dark'].includes(value),
+  },
+  variant: {
+    type: String,
+    default: 'default',
+    validator: (value) => ['default', 'admin'].includes(value),
+  },
   // 'default' -> páginas de listagem/tabela (80% x 80% da tela)
   // 'form'    -> páginas de cadastro/"adicionar" (60% x 50% da tela, centralizado)
   size: {
@@ -70,6 +80,10 @@ defineProps({
   min-height: 100vh;
   background: var(--background);
   overflow-x: hidden;
+}
+
+.page-shell.admin-page-shell {
+  background: var(--primary);
 }
 
 .page-header {
@@ -126,6 +140,16 @@ defineProps({
   padding: var(--space-lg);
   box-shadow: var(--shadow-md);
   box-sizing: border-box;
+}
+
+.admin-page-card {
+  background: var(--background);
+  color: var(--text);
+}
+
+.admin-page-card .page-top-bar h3,
+.admin-page-card .page-subtitle {
+  color: var(--text-dark);
 }
 
 /* When a TabsHeader is present, add top padding so the absolute header

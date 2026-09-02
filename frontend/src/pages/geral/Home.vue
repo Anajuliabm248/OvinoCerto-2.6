@@ -1,6 +1,6 @@
 <template>
   <div class="dashboard">
-    <Header />
+    <Header theme="light" />
 
     <div class="home-page">
       <div class="cards-grid">

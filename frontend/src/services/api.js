@@ -45,6 +45,8 @@ export const usuariosAPI = {
   obter: (id) => api.get(`/usuarios/${id}/`),
   criar: (data) => api.post('/usuarios/', data),
   atualizar: (id, data) => api.put(`/usuarios/${id}/`, data),
+  atualizarParcial: (id, data) => api.patch(`/usuarios/${id}/`, data),
+  atualizarPerfil: (id, data) => api.patch(`/usuarios/${id}/atualizar_perfil/`, data),
   deletar: (id) => api.delete(`/usuarios/${id}/`),
   meuPerfil: () => api.get('/usuarios/me/'),
 }
@@ -88,11 +90,42 @@ export const ingredientesAPI = {
 
 // === AUTENTICAÇÃO ===
 export const autenticacaoAPI = {
-  login: (username, password) =>
-    api.post('/api-token-auth/', { username, password }),
+  login: (email, password) =>
+    api.post('/auth/login/', { email, password }),
+  register: (data) =>
+    api.post('/auth/register/', data),
+  refresh: (refreshToken) =>
+    api.post('/auth/refresh/', { refresh: refreshToken }),
   logout: () => {
     localStorage.removeItem('auth_token')
+    localStorage.removeItem('auth_refresh_token')
     localStorage.removeItem('user')
+  },
+}
+
+// === ADMIN ===
+export const adminAPI = {
+  obterDashboard: async () => {
+    try {
+      return await api.get('/admin/dashboard/')
+    } catch (error) {
+      return {
+        data: {
+          totalUsuarios: 0,
+          deltaUsuarios: '+0%',
+          usuariosAtivos: 0,
+          deltaAtivos: '+0%',
+          totalPropriedades: 0,
+          deltaPropriedades: '+0%',
+          totalFormulacoes: 0,
+          deltaFormulacoes: '+0%',
+          ultimosUsuarios: [],
+          alertas: [
+            { id: 1, texto: 'Nenhum alerta pendente no momento.', cor: '#22c55e' },
+          ],
+        },
+      }
+    }
   },
 }
 

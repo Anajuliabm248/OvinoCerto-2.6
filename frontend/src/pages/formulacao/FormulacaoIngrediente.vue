@@ -1,6 +1,6 @@
 <template>
   <div class="ingredients-page">
-    <Header />
+    <Header theme="light" />
 
     <main class="content">
 
