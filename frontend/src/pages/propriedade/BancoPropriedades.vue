@@ -16,61 +16,88 @@
 
     <Tabela
       :columns="colunas"
-      :rows="linhas"
+      :rows="linhasFormatadas"
       :selectable="false"
       :current-page="paginaAtual"
       @update:current-page="paginaAtual = $event"
       @update:total-pages="totalPaginas = $event"
+      @cell-click="handleCellClick"
     />
-
-    <template #actions>
-      <Botao label="Salvar Mudanças" type="button" />
-    </template>
 
     <template #pagination>
       <Paginacao
         :total-pages="totalPaginas"
         :current-page="paginaAtual"
-        @update:currentPage="paginaAtual = $event"
+        @update:current-page="paginaAtual = $event"
       />
     </template>
   </PageCard>
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import PageCard from '@/components/ui/PageCard.vue'
 import Tabela from '@/components/ui/Tabela.vue'
 import Botao from '@/components/ui/Botao.vue'
 import Paginacao from '@/components/ui/Paginacao.vue'
+import { propriedadesAPI } from '@/services/api'
 
 const paginaAtual = ref(1)
 const totalPaginas = ref(1)
+const linhas = ref([])
 
 const colunas = [
+  { key: 'indice', label: '#', weight: 0.7 },
   { key: 'nome', label: 'Nome', weight: 2 },
-  { key: 'cnpj', label: 'CNPJ', weight: 1.5 },
   { key: 'proprietario', label: 'Proprietário', weight: 1.8 },
   { key: 'telefone', label: 'Telefone', weight: 1.2 },
-  { key: 'estado', label: 'Estado', weight: 1 },
-  { key: 'cidade', label: 'Cidade', weight: 1 },
-  { key: 'localidade', label: 'Localidade', weight: 1 },
-  { key: 'opcoes', label: 'Opções', weight: 0.8 },
+  { key: 'uf', label: 'UF', weight: 1 },
+  { key: 'cidade', label: 'Cidade', weight: 1.4 },
+  { key: 'localidade', label: 'Localidade', weight: 1.4 },
+  {
+    key: 'acoes',
+    label: '',
+    weight: 1.4,
+    render: (row) => `
+      <button type="button" class="botao botao-primary btn-row" data-action="editar" data-id="${row.id}">Editar</button>
+      <button type="button" class="botao botao-danger btn-row" data-action="remover" data-id="${row.id}">Remover</button>
+    `,
+  },
 ]
 
-const linhas = ref(
-  Array.from({ length: 10 }, (_, index) => ({
-    id: index + 1,
-    nome: 'Fazenda Exemplo',
-    cnpj: '00.000.000/0001-00',
-    proprietario: 'João da Silva',
-    telefone: '(12) 34567-8909',
-    estado: 'AC',
-    cidade: 'Acrelândia',
-    localidade: 'Sede',
-    opcoes: 'X  E',
+const linhasFormatadas = computed(() =>
+  linhas.value.map((item, index) => ({
+    ...item,
+    indice: index + 1,
   }))
 )
+
+function handleCellClick({ action }) {
+  if (action === 'editar' || action === 'remover') {
+    console.log('Ação pendente para propriedade:', action)
+  }
+}
+
+const carregarPropriedades = async () => {
+  try {
+    const response = await propriedadesAPI.listar({ page: 1, page_size: 100 })
+    const dados = response.data.results || response.data || []
+    linhas.value = Array.isArray(dados) ? dados : []
+  } catch (error) {
+    console.error('Erro ao carregar propriedades:', error)
+    linhas.value = []
+  }
+}
+
+watch(
+  linhasFormatadas,
+  () => {
+    totalPaginas.value = Math.max(1, Math.ceil(linhasFormatadas.value.length / 10))
+  },
+  { immediate: true }
+)
+
+onMounted(carregarPropriedades)
 </script>
 
 <style scoped>
@@ -78,5 +105,34 @@ const linhas = ref(
   display: flex;
   gap: var(--space-sm);
   flex-wrap: wrap;
+}
+
+.btn-row {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 999px;
+  padding: 8px 16px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  margin: 0 2px;
+  text-decoration: none;
+  transition: filter .2s ease;
+}
+
+.btn-row:hover {
+  filter: brightness(1.08);
+}
+
+.botao-primary {
+  background: var(--primary-dark);
+  color: var(--white);
+}
+
+.botao-danger {
+  background: #d94d4d;
+  color: var(--white);
 }
 </style>

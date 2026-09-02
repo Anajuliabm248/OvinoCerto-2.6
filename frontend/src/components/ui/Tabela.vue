@@ -47,8 +47,12 @@
               :key="col.key"
               :class="{ 'cell-wrap': col.wrap }"
               :title="row.__empty ? null : String(resolveCell(row, col))"
+              @click="handleCellClick($event, row, col)"
             >
-              {{ resolveCell(row, col) }}
+              <span v-if="col.render && !row.__empty" v-html="col.render(row)" />
+              <template v-else>
+                {{ resolveCell(row, col) }}
+              </template>
             </td>
           </tr>
         </tbody>
@@ -82,7 +86,7 @@ const props = defineProps({
   currentPage: { type: Number, default: 1 },
 })
 
-const emit = defineEmits(['update:selected', 'update:currentPage', 'update:totalPages'])
+const emit = defineEmits(['update:selected', 'update:currentPage', 'update:totalPages', 'cell-click'])
 
 const search = ref('')
 
@@ -137,9 +141,49 @@ const pagedRows = computed(() => {
   return [...slice, ...emptyRows]
 })
 
+function formatNumericCell(value) {
+  if (value === null || value === undefined || value === '') return value
+
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value.toFixed(2) : value
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed) return value
+    if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+      const numeric = Number(trimmed)
+      return Number.isFinite(numeric) ? numeric.toFixed(2) : value
+    }
+  }
+
+  return value
+}
+
+function handleCellClick(event, row, col) {
+  if (row.__empty || !col.render) return
+
+  const target = event.target.closest('[data-action]')
+  if (!target) return
+
+  emit('cell-click', {
+    row,
+    col,
+    action: target.dataset.action,
+    id: target.dataset.id,
+    event: target,
+  })
+}
+
 function resolveCell(row, col) {
   if (row.__empty) return ''
-  return col.format ? col.format(row) : row[col.key]
+
+  if (col.format) return col.format(row)
+
+  const value = row[col.key]
+  if (col.key === 'id' || col.key === 'indice') return value
+
+  return formatNumericCell(value)
 }
 
 function isSelected(row) {

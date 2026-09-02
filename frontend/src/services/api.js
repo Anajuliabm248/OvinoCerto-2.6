@@ -23,9 +23,17 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      localStorage.removeItem('auth_token')
-      localStorage.removeItem('user')
-      window.location.href = '/login'
+      const url = error.config?.url || ''
+      const isPublicReadRequest =
+        url.includes('/ingredientes') ||
+        url.includes('/exigencias') ||
+        url.includes('/formulacoes')
+
+      if (!isPublicReadRequest) {
+        localStorage.removeItem('auth_token')
+        localStorage.removeItem('user')
+        window.location.href = '/login'
+      }
     }
     return Promise.reject(error)
   }
@@ -65,9 +73,22 @@ export const exigenciasAPI = {
   obter: (id) => api.get(`/exigencias/${id}/`),
 }
 
+// === INGREDIENTES ===
+export const ingredientesAPI = {
+  listar: (params = {}) => api.get('/ingredientes/', { params }),
+  obter: (id) => api.get(`/ingredientes/${id}/`),
+  criar: (data) => api.post('/ingredientes/', data),
+  atualizar: (id, data) => api.put(`/ingredientes/${id}/`, data),
+  atualizarParcial: (id, data) => api.patch(`/ingredientes/${id}/`, data),
+  deletar: (id) => api.delete(`/ingredientes/${id}/`),
+  meus: () => api.get('/ingredientes/meus/'),
+  tipos: () => api.get('/ingredientes/tipos/'),
+  atualizarPreco: (id, preco) => api.patch(`/ingredientes/${id}/preco/`, { preco }),
+}
+
 // === AUTENTICAÇÃO ===
 export const autenticacaoAPI = {
-  login: (username, password) => 
+  login: (username, password) =>
     api.post('/api-token-auth/', { username, password }),
   logout: () => {
     localStorage.removeItem('auth_token')

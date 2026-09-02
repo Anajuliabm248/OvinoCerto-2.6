@@ -2,7 +2,7 @@
 
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied
 from django.db.models import Q, Case, When, Value, IntegerField
@@ -40,7 +40,12 @@ class IngredienteViewSet(viewsets.ModelViewSet):
     - DELETE /api/ingredientes/{id}/        → exclui (só os próprios, não-Valadares)
     """
     serializer_class = IngredienteSerializer
-    permission_classes = [IsAuthenticated]
+
+    def get_permissions(self):
+        """MODO TESTE: leitura pública e criação livre, com autenticação opcional somente em operações sensíveis."""
+        if self.action in ('update', 'partial_update', 'destroy', 'editar', 'preco'):
+            return [IsAuthenticated()]
+        return [AllowAny()]
 
     def _perfil_obrigatorio(self):
         """Retorna o perfil atual ou produz um erro de permissão compreensível."""
@@ -55,15 +60,21 @@ class IngredienteViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """Lista itens públicos e customizados do usuário, aplicando os filtros."""
         user = self.request.user
+        perfil = None
 
-        try:
-            perfil = user.perfil_usuario
-        except Usuario.DoesNotExist:
-            perfil = None
+        if getattr(user, 'is_authenticated', False):
+            try:
+                perfil = user.perfil_usuario
+            except Usuario.DoesNotExist:
+                perfil = None
 
-        if perfil:
+        if not getattr(user, 'is_authenticated', False):
             qs = Ingrediente.objects.filter(
-                Q(fonte_valadares=True) | Q(usuario=perfil)
+                Q(fonte_valadares=True) | Q(fonte_valadares=False, usuario__isnull=True)
+            )
+        elif perfil:
+            qs = Ingrediente.objects.filter(
+                Q(fonte_valadares=True) | Q(usuario=perfil) | Q(fonte_valadares=False, usuario__isnull=True)
             )
         else:
             qs = Ingrediente.objects.filter(fonte_valadares=True)
@@ -73,8 +84,11 @@ class IngredienteViewSet(viewsets.ModelViewSet):
         valadares = params.get('valadares', '').strip().lower()
         if valadares == 'true':
             qs = qs.filter(fonte_valadares=True)
-        elif valadares == 'false' and perfil:
-            qs = qs.filter(fonte_valadares=False, usuario=perfil)
+        elif valadares == 'false':
+            if perfil:
+                qs = qs.filter(fonte_valadares=False, usuario=perfil)
+            else:
+                qs = qs.filter(fonte_valadares=False, usuario__isnull=True)
 
         classificacao = params.get('classificacao', '').strip()
         if classificacao:
@@ -106,9 +120,14 @@ class IngredienteViewSet(viewsets.ModelViewSet):
         return self.create(request)
 
     def perform_create(self, serializer):
-        """Associa toda nova linha customizada ao perfil autenticado."""
+        """Associa o ingrediente ao perfil autenticado quando houver, senão grava como custom sem dono."""
+        try:
+            perfil = self.request.user.perfil_usuario
+        except (AttributeError, Usuario.DoesNotExist):
+            perfil = None
+
         serializer.save(
-            usuario=self._perfil_obrigatorio(),
+            usuario=perfil,
             fonte_valadares=False,
         )
 
@@ -173,6 +192,8 @@ class IngredienteViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def meus(self, request):
         """Retorna somente os ingredientes customizados do usuário logado."""
+        if not getattr(request.user, 'is_authenticated', False):
+            return Response([])
         try:
             perfil = request.user.perfil_usuario
         except Usuario.DoesNotExist:

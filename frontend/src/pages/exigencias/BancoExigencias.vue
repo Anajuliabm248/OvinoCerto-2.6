@@ -11,7 +11,7 @@
 
     <Tabela
       :columns="colunas"
-      :rows="linhas"
+      :rows="linhasComIndice"
       :selectable="false"
       :current-page="paginaAtual"
       @update:current-page="paginaAtual = $event"
@@ -33,7 +33,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import PageCard from '@/components/ui/PageCard.vue'
 import Tabela from '@/components/ui/Tabela.vue'
 import Botao from '@/components/ui/Botao.vue'
@@ -44,6 +44,7 @@ const paginaAtual = ref(1)
 const totalPaginas = ref(1)
 
 const colunas = [
+  { key: 'indice', label: '#', weight: 1 },
   { key: 'categoria_display', label: 'Categoria', wrap: true, weight: 2 },
   { key: 'fase_display', label: 'Fase', weight: 1.8 },
   { key: 'pv_kg', label: 'PV (kg)', weight: 1 },
@@ -70,13 +71,44 @@ const colunas = [
 
 const linhas = ref([])
 
+const linhasComIndice = computed(() =>
+  linhas.value.map((item, index) => ({
+    ...item,
+    indice: index + 1,
+  }))
+)
+
 const carregarExigencias = async () => {
   try {
-    const response = await exigenciasAPI.listar()
-    linhas.value = response.data.results || response.data
+    let pagina = 1
+    const registros = []
+
+    while (true) {
+      const response = await exigenciasAPI.listar({
+        page: pagina,
+        page_size: 100,
+      })
+
+      const dados = response.data.results || response.data || []
+
+      if (!Array.isArray(dados) || dados.length === 0) {
+        break
+      }
+
+      registros.push(...dados)
+
+      if (!response.data.next || dados.length < 100) {
+        break
+      }
+
+      pagina += 1
+    }
+
+    linhas.value = registros
   } catch (error) {
     console.error('Erro ao carregar exigências:', error)
     linhas.value = []
+    totalPaginas.value = 1
   }
 }
 

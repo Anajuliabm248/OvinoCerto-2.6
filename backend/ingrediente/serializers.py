@@ -141,10 +141,16 @@ class IngredienteSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         if not request or not hasattr(request, 'user'):
             return None
+
+        user = request.user
+        if not getattr(user, 'is_authenticated', False):
+            return None
+
         try:
-            perfil = request.user.perfil_usuario
+            perfil = user.perfil_usuario
         except Usuario.DoesNotExist:
             return None
+
         registro = PrecoIngredienteUsuario.objects.filter(usuario=perfil, ingrediente=obj).first()
         if registro:
             return registro.preco_kg_mn

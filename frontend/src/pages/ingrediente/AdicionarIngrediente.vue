@@ -8,7 +8,7 @@
 
       <div class="form-row">
         <Seletor v-model="form.classificacao" placeholder="Classificação" :options="opcoesClassificacao" />
-        <CampoTexto v-model="form.tipo" placeholder="Tipo" />
+        <Seletor v-model="form.tipo" placeholder="Tipo" :options="opcoesTipo" />
         <CampoTexto v-model="form.nome" placeholder="Nome de ingrediente" />
       </div>
 
@@ -40,6 +40,9 @@
         </div>
       </div>
 
+      <div v-if="mensagem" class="status success">{{ mensagem }}</div>
+      <div v-if="erro" class="status error">{{ erro }}</div>
+
       <div class="form-actions">
         <Botao label="Cadastrar" type="submit" />
       </div>
@@ -49,11 +52,17 @@
 </template>
 
 <script setup>
-import { reactive } from 'vue'
+import { computed, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import PageCard from '@/components/ui/PageCard.vue'
 import CampoTexto from '@/components/ui/CampoTexto.vue'
 import Seletor from '@/components/ui/Seletor.vue'
 import Botao from '@/components/ui/Botao.vue'
+import { ingredientesAPI } from '@/services/api'
+
+const router = useRouter()
+const mensagem = ref('')
+const erro = ref('')
 
 const form = reactive({
   classificacao: '',
@@ -72,11 +81,105 @@ const form = reactive({
 const opcoesClassificacao = [
   { value: 'volumoso', label: 'Volumoso' },
   { value: 'concentrado', label: 'Concentrado' },
-  { value: 'suplemento', label: 'Suplemento' },
 ]
 
-function handleSubmit() {
-  console.log('Cadastrar ingrediente:', { ...form })
+const opcoesTipo = computed(() => {
+  if (form.classificacao === 'volumoso') {
+    return [
+      { value: 'forragens_secas', label: 'Forragens Secas' },
+      { value: 'forragens_verdes', label: 'Forragens Verdes' },
+      { value: 'silagens', label: 'Silagens' },
+    ]
+  }
+
+  if (form.classificacao === 'concentrado') {
+    return [
+      { value: 'energetico', label: 'Energético' },
+      { value: 'proteico', label: 'Proteico' },
+      { value: 'mineral', label: 'Mineral' },
+      { value: 'aditivos', label: 'Aditivos' },
+    ]
+  }
+
+  return []
+})
+
+function parseDecimal(value) {
+  if (value === '' || value === null || value === undefined) return NaN
+
+  const texto = String(value).trim()
+
+  if (texto.includes(',') && texto.includes('.')) {
+    const normalizado = texto.replace(/\./g, '').replace(',', '.')
+    const numero = Number(normalizado)
+    return Number.isFinite(numero) ? numero : NaN
+  }
+
+  if (texto.includes(',')) {
+    const normalizado = texto.replace(',', '.')
+    const numero = Number(normalizado)
+    return Number.isFinite(numero) ? numero : NaN
+  }
+
+  const numero = Number(texto)
+  return Number.isFinite(numero) ? numero : NaN
+}
+
+async function handleSubmit() {
+  erro.value = ''
+  mensagem.value = ''
+
+  const camposNumericos = {
+    ms: 'MS',
+    pb: 'PB',
+    ndt: 'NDT',
+    fdn: 'FDN',
+    ee: 'EE',
+    ca: 'Ca',
+    p: 'P',
+    custo: 'Custo',
+  }
+
+  for (const [campo, label] of Object.entries(camposNumericos)) {
+    const valor = parseDecimal(form[campo])
+    if (Number.isNaN(valor)) {
+      erro.value = `Campo ${label} inválido. Use números como 25,80 ou 25.80.`
+      return
+    }
+    form[campo] = String(valor)
+  }
+
+  try {
+    const payload = {
+      classificacao: form.classificacao,
+      tipo: form.tipo,
+      nome: form.nome.trim(),
+      ms: parseDecimal(form.ms),
+      pb: parseDecimal(form.pb),
+      ndt: parseDecimal(form.ndt),
+      fdn: parseDecimal(form.fdn),
+      ee: parseDecimal(form.ee),
+      ca: parseDecimal(form.ca),
+      p: parseDecimal(form.p),
+      custo_kg: parseDecimal(form.custo),
+    }
+
+    await ingredientesAPI.criar(payload)
+    mensagem.value = 'Ingrediente salvo com sucesso na aba de usuário.'
+
+    setTimeout(() => {
+      router.push('/ingredientes')
+    }, 500)
+  } catch (error) {
+    const detail = error.response?.data
+    const message =
+      detail?.non_field_errors?.[0] ||
+      detail?.detail ||
+      Object.entries(detail || {}).flatMap(([campo, erros]) => Array.isArray(erros) ? erros : [erros]).join(' ') ||
+      'Não foi possível salvar o ingrediente.'
+    erro.value = message
+    console.error('Erro ao criar ingrediente:', error)
+  }
 }
 </script>
 
@@ -121,6 +224,23 @@ function handleSubmit() {
   color: #666;
   font-size: 14px;
   flex-wrap: wrap;
+}
+
+.status {
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.status.success {
+  background: rgba(95, 115, 23, 0.12);
+  color: #2f3d00;
+}
+
+.status.error {
+  background: rgb(255, 0, 0);
+  color: #000000;
 }
 
 .form-actions {

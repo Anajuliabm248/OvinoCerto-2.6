@@ -6,15 +6,14 @@
 
     <form class="property-form" @submit.prevent="handleSubmit">
       <div class="form-row">
-        <CampoTexto v-model="form.identificacao" placeholder="Identificação" />
-        <CampoTexto v-model="form.cnpj" placeholder="CNPJ" />
+        <CampoTexto v-model="form.nome" placeholder="Nome da propriedade" />
         <CampoTexto v-model="form.proprietario" placeholder="Proprietário" />
+        <CampoTexto v-model="form.telefone" placeholder="Telefone" />
       </div>
 
       <div class="form-row second-row">
-        <CampoTexto v-model="form.telefone" placeholder="Telefone" />
-        <select v-model="form.estado" class="form-input">
-          <option value="" disabled>Estado</option>
+        <select v-model="form.uf" class="form-input">
+          <option value="" disabled>UF</option>
           <option v-for="uf in estados" :key="uf.sigla" :value="uf.sigla">
             {{ uf.sigla }} - {{ uf.nome }}
           </option>
@@ -26,15 +25,16 @@
       <p class="preview-label">Exemplo de visualização na relação de propriedades:</p>
 
       <div class="preview-row">
-        <span>{{ form.identificacao || 'TESTE' }}</span>
-        <span>{{ form.cnpj || '00.000.000/000-00' }}</span>
-        <span>{{ form.proprietario || 'TESTE' }}</span>
+        <span>{{ form.nome || 'Fazenda exemplo' }}</span>
+        <span>{{ form.proprietario || 'Proprietário' }}</span>
         <span>{{ form.telefone || '(12) 34567-8909' }}</span>
-        <span>{{ form.estado || 'AC - Acre' }}</span>
-        <span>{{ form.cidade || 'Acrelândia' }}</span>
-        <span>{{ form.localidade || 'D' }}</span>
-        <span class="preview-options">X E</span>
+        <span>{{ form.uf || 'RS' }}</span>
+        <span>{{ form.cidade || 'Santa Maria' }}</span>
+        <span>{{ form.localidade || 'Sede' }}</span>
       </div>
+
+      <div v-if="mensagem" class="status success">{{ mensagem }}</div>
+      <div v-if="erro" class="status error">{{ erro }}</div>
 
       <div class="form-actions">
         <Botao label="Cadastrar" type="submit" />
@@ -44,10 +44,16 @@
 </template>
 
 <script setup>
-import { reactive } from 'vue'
+import { reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import PageCard from '@/components/ui/PageCard.vue'
 import CampoTexto from '@/components/ui/CampoTexto.vue'
 import Botao from '@/components/ui/Botao.vue'
+import { propriedadesAPI } from '@/services/api'
+
+const router = useRouter()
+const erro = ref('')
+const mensagem = ref('')
 
 const estados = [
   { sigla: 'AC', nome: 'Acre' },
@@ -80,18 +86,36 @@ const estados = [
 ]
 
 const form = reactive({
-  identificacao: '',
-  cnpj: '',
+  nome: '',
   proprietario: '',
   telefone: '',
-  estado: '',
+  uf: '',
   cidade: '',
   localidade: '',
 })
 
-function handleSubmit() {
-  // TODO: integrar com a API de cadastro de propriedades
-  console.log('Cadastrar propriedade:', { ...form })
+async function handleSubmit() {
+  erro.value = ''
+  mensagem.value = ''
+
+  try {
+    await propriedadesAPI.criar({
+      nome: form.nome.trim(),
+      proprietario: form.proprietario.trim(),
+      telefone: form.telefone.trim(),
+      uf: form.uf.trim(),
+      cidade: form.cidade.trim(),
+      localidade: form.localidade.trim(),
+    })
+
+    mensagem.value = 'Propriedade salva com sucesso.'
+    setTimeout(() => router.push('/propriedades'), 500)
+  } catch (error) {
+    const detail = error.response?.data
+    const message = detail?.detail || 'Não foi possível salvar a propriedade.'
+    erro.value = message
+    console.error('Erro ao criar propriedade:', error)
+  }
 }
 </script>
 
@@ -152,6 +176,23 @@ select.form-input {
 .preview-options {
   font-weight: 600;
   color: var(--text);
+}
+
+.status {
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.status.success {
+  background: rgba(95, 115, 23, 0.12);
+  color: #2f3d00;
+}
+
+.status.error {
+  background: rgba(180, 62, 62, 0.12);
+  color: #7a1d1d;
 }
 
 .form-actions {

@@ -3,7 +3,7 @@
 from django.contrib.auth import get_user_model
 from django.urls import reverse
 from rest_framework import status
-from rest_framework.test import APITestCase
+from rest_framework.test import APIClient, APITestCase
 
 from accounts.models import Usuario
 from ingrediente.models import (
@@ -104,6 +104,36 @@ class IngredienteAPITests(APITestCase):
         self.assertEqual(ingrediente.nome, 'Milho')
         self.assertEqual(ingrediente.pb, 8.5)
         self.assertEqual(ingrediente.custo_kg, 1.90)
+
+    def test_listagem_anonima_nao_quebra(self):
+        """Requisições públicas devem listar ingredientes sem exigir perfil do usuário."""
+        Ingrediente.objects.create(**self._composicao('Milho 2'), fonte_valadares=True)
+
+        cliente = APIClient()
+        resposta = cliente.get(reverse('ingrediente-list'), {'valadares': 'true'})
+
+        self.assertEqual(resposta.status_code, status.HTTP_200_OK)
+        self.assertGreaterEqual(len(resposta.data['results']), 1)
+
+    def test_criacao_custom_sem_autenticacao(self):
+        """Fluxo simples de teste permite criar ingrediente custom sem login."""
+        cliente = APIClient()
+        dados = self._composicao('Milho Local')
+
+        resposta = cliente.post(reverse('ingrediente-list'), dados, format='json')
+
+        self.assertEqual(resposta.status_code, status.HTTP_201_CREATED)
+        self.assertFalse(resposta.data['fonte_valadares'])
+
+    def test_listagem_custom_sem_autenticacao_aparece_na_aba_usuario(self):
+        """Em modo de teste, ingredientes custom sem usuário devem aparecer na aba de usuário."""
+        Ingrediente.objects.create(**self._composicao('Milho Local 2'), fonte_valadares=False, usuario=None)
+
+        cliente = APIClient()
+        resposta = cliente.get(reverse('ingrediente-list'), {'valadares': 'false'})
+
+        self.assertEqual(resposta.status_code, status.HTTP_200_OK)
+        self.assertTrue(any(item['nome'] == 'Milho Local 2' for item in resposta.data['results']))
 
     def test_criacao_rejeita_materia_seca_zero(self):
         """Composição sem matéria seca não entra no catálogo customizado."""
